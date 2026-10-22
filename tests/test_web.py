@@ -233,9 +233,10 @@ def test_unsafe_production_settings_refuse_to_start():
     from app.web.security import check_production_settings
     base = dict(app_base_url="https://lien-waivers-production.up.railway.app", google_client_id="id",
                 google_client_secret="s", secret_key="x" * 64, dev_auth_email="", mail_provider="gmail")
+    base["database_url"] = "postgresql://u:p@db:5432/railway"
     check_production_settings(Settings(**base))
     for bad in (dict(secret_key="dev-only-change-me"), dict(dev_auth_email="a@buildoutpros.com"),
-                dict(google_client_id=""), dict(mail_provider="fake")):
+                dict(google_client_id=""), dict(mail_provider="fake"), dict(database_url="sqlite:////app/data/x.db")):
         with _pytest.raises(RuntimeError):
             check_production_settings(Settings(**(base | bad)))
 

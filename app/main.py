@@ -65,12 +65,14 @@ def create_app() -> FastAPI:
         try:
             db.execute(text("SELECT 1"))
             last = db.scalar(select(SyncRun).order_by(SyncRun.id.desc()).limit(1))
+            dialect = db.get_bind().dialect.name
         except Exception as exc:
             return JSONResponse({"status": "error", "db": repr(exc)}, status_code=503)
         finally:
             db.close()
         return {
             "status": "ok",
+            "database": "postgres" if dialect == "postgresql" else "sqlite (not for production)",
             "time": datetime.now(timezone.utc).isoformat(),
             "last_sync": None if not last else {
                 "id": last.id, "status": last.status,

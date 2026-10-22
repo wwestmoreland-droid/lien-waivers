@@ -81,6 +81,10 @@ def production_problems(s: Settings) -> list[str]:
         problems.append("GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are required.")
     if s.mail_provider != "gmail":
         problems.append("MAIL_PROVIDER must be gmail on a public server.")
+    if s.database_url.startswith("sqlite"):
+        problems.append("DATABASE_URL isn't set, so the app would keep its data in a temporary file that is "
+                        "wiped on every deploy. Set DATABASE_URL to ${{Postgres.DATABASE_URL}} (the Postgres "
+                        "service's connection string).")
     return problems
 
 
