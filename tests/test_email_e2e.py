@@ -184,23 +184,35 @@ def test_readonly_source_found_in_ap(mail):
 def test_reminders_and_escalation(mail):
     db = mail.db
     w, e = send_request(mail)
-    sent = datetime(2026, 10, 1, 15, tzinfo=timezone.utc)
-    w.sent_at = sent
+    w.sent_at = datetime(2026, 10, 1, 15, tzinfo=timezone.utc)  # Thursday
     db.commit()
-    assert reminders.run(db, date(2026, 10, 3)) == {"reminder_1": 0, "reminder_2": 0, "escalation": 0}
-    reminders.run(db, date(2026, 10, 5))
+    # Day 7 = Thursday Oct 8: first reminder, not before.
+    assert reminders.run(db, date(2026, 10, 7)) == {"reminder_1": 0, "reminder_2": 0, "escalation": 0}
+    reminders.run(db, date(2026, 10, 8))
     r1 = db.scalar(select(EmailMessage).where(EmailMessage.kind == "reminder_1"))
     assert r1.provider_thread_id == e.provider_thread_id and r1.attachments and "attached again" in r1.body_text
-    reminders.run(db, date(2026, 10, 5))
+    reminders.run(db, date(2026, 10, 9))
     assert len(db.scalars(select(EmailMessage).where(EmailMessage.kind == "reminder_1")).all()) == 1
     outbound.send(db, r1, "ap")
-    reminders.run(db, date(2026, 10, 8))
+    # Day 10 = Sunday Oct 11: nothing on the weekend; Monday picks it up.
+    assert reminders.run(db, date(2026, 10, 11))["reminder_2"] == 0
+    reminders.run(db, date(2026, 10, 12))
     r2 = db.scalar(select(EmailMessage).where(EmailMessage.kind == "reminder_2"))
     assert "We still don't have the signed lien waiver" in r2.body_text and "on hold" not in r2.body_text
-    reminders.run(db, date(2026, 10, 12))
+    assert reminders.run(db, date(2026, 10, 13))["escalation"] == 0
+    reminders.run(db, date(2026, 10, 14))  # day 13
     esc = db.scalar(select(EmailMessage).where(EmailMessage.kind == "escalation"))
     assert esc.to_addrs == ["pmanager@buildoutpros.com"] and esc.body_text.startswith("Pat,")
     assert "Their billing contact is Dana AP, ap@deltafire.com." in esc.body_text  # empty phone left out
+
+
+def test_reminder_days_are_a_setting(mail):
+    db = mail.db
+    w, e = send_request(mail)
+    w.sent_at = datetime(2026, 10, 1, 15, tzinfo=timezone.utc)
+    set_setting(db, "reminder_days", [3, 5], "admin")
+    db.commit()
+    assert reminders.run(db, date(2026, 10, 5))["reminder_1"] == 1  # Monday, day 4
 
 
 def test_auto_send_setting(mail):
@@ -277,7 +289,8 @@ def test_waivers_from_before_email_get_request_drafts(mail):
 def test_no_reminders_on_weekends(mail):
     db = mail.db
     w, e = send_request(mail)
-    w.sent_at = datetime(2026, 10, 1, 15, tzinfo=timezone.utc)  # Thursday
+    w.sent_at = datetime(2026, 9, 26, 15, tzinfo=timezone.utc)  # Saturday; day 7 is Saturday Oct 3
     db.commit()
-    assert reminders.run(db, date(2026, 10, 4)) == {"reminder_1": 0, "reminder_2": 0, "escalation": 0}  # Sunday
+    assert reminders.run(db, date(2026, 10, 3)) == {"reminder_1": 0, "reminder_2": 0, "escalation": 0}
+    assert reminders.run(db, date(2026, 10, 4))["reminder_1"] == 0  # Sunday
     assert reminders.run(db, date(2026, 10, 5))["reminder_1"] == 1  # Monday picks it up

@@ -9,9 +9,23 @@ Banned phrases, em dashes, exclamation points, bold and emojis are refused when 
 {% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
 
 <div class="panel">
+  <h2 style="margin-top:0">Reminders and escalation</h2>
+  <p class="small muted">Days after the request goes out. They run at 8:00 AM Central on weekdays; anything due on a weekend goes out Monday.</p>
+  <form method="post" action="/settings/email/sending" class="filters" id="days">
+    <label>First reminder on day <input type="number" name="reminder_1" min="1" value="{{ reminder_days[0] }}" style="width:60px" {{ 'disabled' if not admin }}></label>
+    <label>Second reminder on day <input type="number" name="reminder_2" min="1" value="{{ reminder_days[1] }}" style="width:60px" {{ 'disabled' if not admin }}></label>
+    <label>Escalate to the PM on day <input type="number" name="escalation_day" min="1" value="{{ escalation_day }}" style="width:60px" {{ 'disabled' if not admin }}></label>
+    {% for k, v in auto_send.items() if v %}<input type="hidden" name="auto_{{ k }}" value="on">{% endfor %}
+    {% if received %}<input type="hidden" name="received" value="on">{% endif %}
+    {% if admin %}<button class="btn">Save</button>{% endif %}
+  </form>
+</div>
+
+<div class="panel">
   <h2 style="margin-top:0">Review before send</h2>
   <p class="small muted">Every email waits in the Outbox for a person to send it. Tick a type to let it go out on its own once you trust it.</p>
   <form method="post" action="/settings/email/sending">
+    <input type="hidden" name="reminder_1" value="{{ reminder_days[0] }}"><input type="hidden" name="reminder_2" value="{{ reminder_days[1] }}"><input type="hidden" name="escalation_day" value="{{ escalation_day }}">
     {% for k in kinds %}
       <label style="display:block"><input type="checkbox" name="auto_{{ k }}" {{ 'checked' if auto_send.get(k) }} {{ 'disabled' if not admin }}> Auto-send: {{ KIND_LABELS.get(k, k) }}</label>
     {% endfor %}

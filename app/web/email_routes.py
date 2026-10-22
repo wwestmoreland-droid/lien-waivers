@@ -454,7 +454,8 @@ def email_settings(request: Request, msg: str = "", db: Session = Depends(get_db
                      "problems": mail_templates.lint(text)})
     return render(request, "email_settings.html", user, rows=rows, msg=msg,
                   auto_send=get_setting(db, "auto_send") or {}, kinds=outbound.AUTO_SEND_KINDS,
-                  received=bool(get_setting(db, "send_received_reply")))
+                  received=bool(get_setting(db, "send_received_reply")),
+                  reminder_days=get_setting(db, "reminder_days"), escalation_day=get_setting(db, "escalation_day"))
 
 
 @router.post("/settings/email/template/{key}")
@@ -485,6 +486,18 @@ async def save_sending(request: Request, db: Session = Depends(get_db), user: Us
     auto = {k: v for k, v in auto.items() if v}
     if auto != (get_setting(db, "auto_send") or {}):
         set_setting(db, "auto_send", auto, user.email)
+    try:
+        days = sorted({int(form.get("reminder_1", 7)), int(form.get("reminder_2", 10))})
+        esc = int(form.get("escalation_day", 13))
+    except ValueError:
+        return RedirectResponse("/settings/email?msg=" + quote("Reminder days must be whole numbers."), status_code=303)
+    if len(days) != 2 or days[0] < 1 or esc <= days[-1]:
+        return RedirectResponse("/settings/email?msg=" + quote(
+            "Use two different reminder days, and an escalation day after the second reminder."), status_code=303)
+    if days != get_setting(db, "reminder_days"):
+        set_setting(db, "reminder_days", days, user.email)
+    if esc != get_setting(db, "escalation_day"):
+        set_setting(db, "escalation_day", esc, user.email)
     received = form.get("received") == "on"
     if received != bool(get_setting(db, "send_received_reply")):
         set_setting(db, "send_received_reply", received, user.email)

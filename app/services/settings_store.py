@@ -21,6 +21,9 @@ def defaults() -> dict:
         # Email types that skip the Outbox and go out on their own (all off: review before send).
         "auto_send": {},
         "send_received_reply": False,
+        # Days after the request goes out (checks are mailed, so give them time to arrive).
+        "reminder_days": [7, 10],
+        "escalation_day": 13,
         "email_templates": {},
     }
 

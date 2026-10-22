@@ -24,8 +24,8 @@ log = structlog.get_logger()
 
 KIND_LABELS = {
     "waiver_request": "Waiver request",
-    "reminder_1": "Reminder (day 3)",
-    "reminder_2": "Second reminder (day 7)",
+    "reminder_1": "Reminder",
+    "reminder_2": "Second reminder",
     "escalation": "Escalation to PM",
     "correction": "Needs correction",
     "received": "Received",
