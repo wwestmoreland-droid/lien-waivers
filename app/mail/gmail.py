@@ -207,6 +207,20 @@ class GmailProvider:
                                unread="UNREAD" in meta.get("labelIds", [])))
         return out
 
+    def recent_ids(self, days: int, limit: int = 500) -> list[str]:
+        ids: list[str] = []
+        page = None
+        while len(ids) < limit:
+            params = {"q": f"newer_than:{days}d", "maxResults": min(500, limit - len(ids))}
+            if page:
+                params["pageToken"] = page
+            data = self._call("GET", "/messages", params=params)
+            ids += [m["id"] for m in data.get("messages", [])]
+            page = data.get("nextPageToken")
+            if not page:
+                break
+        return list(reversed(ids))
+
     # ------------------------------------------------------------ labels
 
     def ensure_label(self, name: str) -> str:

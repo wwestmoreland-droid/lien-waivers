@@ -139,6 +139,7 @@ def connect(db: Session, email_addr: str, role: str, refresh_token: str | None, 
     try:
         _, cursor = provider_for(mb).changes_since(None)
         mb.history_id = cursor
+        mb.last_polled_at = None  # next check looks back CATCH_UP_DAYS
     except TokenError as exc:
         mark_broken(db, mb, str(exc))
     audit(db, actor, "mailbox.connected", "mailbox", mb.email, role=mb.role, scopes=scopes)

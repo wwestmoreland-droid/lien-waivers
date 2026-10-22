@@ -294,3 +294,20 @@ def test_no_reminders_on_weekends(mail):
     assert reminders.run(db, date(2026, 10, 3)) == {"reminder_1": 0, "reminder_2": 0, "escalation": 0}
     assert reminders.run(db, date(2026, 10, 4))["reminder_1"] == 0  # Sunday
     assert reminders.run(db, date(2026, 10, 5))["reminder_1"] == 1  # Monday picks it up
+
+
+def test_connecting_catches_up_on_recent_mail(mail):
+    db = mail.db
+    w, e = send_request(mail)
+    box = FakeMailProvider("wwestmoreland@buildoutpros.com").box
+    # Arrived while the mailbox wasn't connected to the app.
+    box.deliver(from_addr="ap@deltafire.com", subject=f"waiver [LW-{w.id}]", to=["ap@buildoutpros.com"],
+                recipients_all=["ap@buildoutpros.com", "wwestmoreland@buildoutpros.com"],
+                attachments=[InAttachment("w.pdf", "application/pdf", PDF)])
+    ro = mailboxes.connect(db, "wwestmoreland@buildoutpros.com", "readonly", "refresh-2", "gmail.readonly", "admin")
+    ro.only_to = "ap@buildoutpros.com"
+    db.commit()
+    inbound.poll_all(db)
+    inbound.poll_all(db)  # second check doesn't store it twice
+    found = db.scalars(select(EmailMessage).where(EmailMessage.mailbox_id == ro.id)).all()
+    assert len(found) == 1 and found[0].waiver_id == w.id

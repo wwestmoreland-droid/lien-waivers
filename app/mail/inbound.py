@@ -97,6 +97,9 @@ def open_waivers_for_vendor(db: Session, vendor_id: int) -> list[Waiver]:
 
 # ---------------------------------------------------------------- polling
 
+CATCH_UP_DAYS = 14
+
+
 def poll_all(db: Session) -> dict:
     stats = {"mailboxes": 0, "new": 0, "kept": 0}
     for mb in db.scalars(select(Mailbox).where(Mailbox.status == "connected",
@@ -122,6 +125,10 @@ def poll(db: Session, mb: Mailbox) -> tuple[int, int]:
         log.warning("mail.cursor_expired", mailbox=mb.email)
         _, cursor = provider.changes_since(None)
         ids = []
+    if mb.last_polled_at is None:
+        # First check after connecting: also look back, so mail that arrived while the
+        # mailbox wasn't connected isn't missed. Already-stored messages are skipped below.
+        ids = [i for i in provider.recent_ids(CATCH_UP_DAYS) if i not in ids] + ids
     kept = 0
     for mid in ids:
         if db.scalar(select(EmailMessage.id).where(EmailMessage.mailbox_id == mb.id,

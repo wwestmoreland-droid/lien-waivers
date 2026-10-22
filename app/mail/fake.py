@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import itertools
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app.mail.provider import Incoming, InAttachment, Outgoing, SentResult, Summary, TokenError
 
@@ -96,6 +96,12 @@ class FakeMailProvider:
                                subject=m.subject, date=m.date, snippet=m.body_text[:120],
                                unread="UNREAD" in m.label_ids))
         return out
+
+    def recent_ids(self, days: int, limit: int = 500) -> list[str]:
+        self._check()
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        return [mid for mid in self.box.order
+                if not self.box.messages[mid].date or self.box.messages[mid].date >= cutoff][-limit:]
 
     def revoke(self) -> None:
         self.box.revoked = True
