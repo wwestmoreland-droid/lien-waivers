@@ -7,7 +7,7 @@
 
 <div class="panel">
   <dl class="kv">
-    <dt>Statutory-form states</dt><dd>{{ reg.statutory_states|sort|join(', ') }}. Jobs in these states need their own counsel-reviewed form; the default forms are never used there.</dd>
+    <dt>Statutory-form states</dt><dd>{% if reg.statutory_states %}{{ reg.statutory_states|sort|join(', ') }}. Jobs in these states need their own counsel-reviewed form; the default forms are never used there.{% else %}None. Every state uses the default forms.{% endif %}</dd>
     <dt>Blocked waivers</dt><dd>{{ blocked }} waiting on a form{% if user.role in ('Admin', 'AP') %}
       <form class="inline" method="post" action="/settings/templates/recheck"><button class="btn sm">Reload registry and recheck</button></form>{% endif %}</dd>
   </dl>

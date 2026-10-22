@@ -141,7 +141,35 @@ def test_unmatched_event_waits_then_processes_after_mapping(db, tracked):
     assert [w.type for w in waivers(db, 2007)] == [W.UNCONDITIONAL_PARTIAL]
 
 
+def test_every_state_uses_default_forms(db, tracked):
+    add_ap(tracked, 2009, "Valley Drywall", 5000.0, "2026-10-20", paid="2026-10-21",
+           project=OTHER_PROJECT, project_name=OTHER_NAME)
+    sync(db, tracked)
+    [w] = waivers(db, 2009)
+    assert w.state == "CA" and w.status == WaiverStatus.DRAFT
+    assert w.template_key == "default/unconditional_partial"
+
+
+def _registry_copy(tmp_path, statutory, ca_template=False):
+    reg_dir = tmp_path / "pdf"
+    (reg_dir / "default").mkdir(parents=True, exist_ok=True)
+    src = service.registry().templates["default/unconditional_partial"].file
+    for f in src.parent.glob("*.pdf"):
+        (reg_dir / "default" / f.name).write_bytes(f.read_bytes())
+    data = yaml.safe_load((src.parent.parent / "registry.yaml").read_text())
+    data["statutory_states"] = statutory
+    if ca_template:
+        data["templates"]["CA/unconditional_partial"] = dict(data["templates"]["default/unconditional_partial"],
+                                                             state="CA")
+    (reg_dir / "registry.yaml").write_text(yaml.safe_dump(data))
+    from app.waivers import registry as reg_mod
+    return reg_mod.load_registry(reg_dir / "registry.yaml")
+
+
 def test_statutory_state_blocks_until_template_added(db, tracked, tmp_path, monkeypatch):
+    """The state-form mechanism still works if a state is listed later."""
+    blocked = _registry_copy(tmp_path, ["CA"])
+    monkeypatch.setattr(service, "registry", lambda: blocked)
     add_ap(tracked, 2008, "Valley Drywall", 5000.0, "2026-10-20", paid="2026-10-21",
            project=OTHER_PROJECT, project_name=OTHER_NAME)
     sync(db, tracked)
@@ -151,17 +179,8 @@ def test_statutory_state_blocks_until_template_added(db, tracked, tmp_path, monk
     assert w.generated_pdf_path is None
     assert db.scalar(select(ReviewItem).where(ReviewItem.kind == "statutory_form_missing", ReviewItem.ref_id == w.id))
 
-    # Register a CA form (test stand-in) and recheck.
-    reg_dir = tmp_path / "pdf"
-    (reg_dir / "default").mkdir(parents=True)
-    src = service.registry().templates["default/unconditional_partial"].file
-    for f in src.parent.glob("*.pdf"):
-        (reg_dir / "default" / f.name).write_bytes(f.read_bytes())
-    data = yaml.safe_load((src.parent.parent / "registry.yaml").read_text())
-    data["templates"]["CA/unconditional_partial"] = dict(data["templates"]["default/unconditional_partial"], state="CA")
-    (reg_dir / "registry.yaml").write_text(yaml.safe_dump(data))
-    from app.waivers import registry as reg_mod
-    monkeypatch.setattr(service, "registry", lambda: reg_mod.load_registry(reg_dir / "registry.yaml"))
+    with_ca = _registry_copy(tmp_path, ["CA"], ca_template=True)
+    monkeypatch.setattr(service, "registry", lambda: with_ca)
     assert service.recheck_blocked(db) == 1
     db.commit()
     assert w.status == WaiverStatus.DRAFT and w.template_key == "CA/unconditional_partial"

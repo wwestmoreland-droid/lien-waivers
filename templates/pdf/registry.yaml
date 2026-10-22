@@ -1,14 +1,18 @@
 # Waiver template registry, keyed by (state, waiver type).
 #
 # Lookup: an exact state entry wins. Otherwise `default` is used, unless the project's state
-# is in statutory_states. Those states need their own counsel-reviewed form, and without one
-# the waiver goes to the Review queue ("Statutory form required for {STATE}; add template.").
+# is in statutory_states. A state listed there needs its own counsel-reviewed form, and without
+# one the waiver goes to the Review queue ("Statutory form required for {STATE}; add template.").
+#
+# Buildout Pros decision (Oct 2026): use the default forms in every state for now. To require a
+# state form later, add the state to statutory_states (e.g. [CA, AZ, NV, TX, FL]) and register
+# its template below.
 #
 # The sub's address, signature, printed name and the notary block are left blank for the sub.
 # Coordinates are PDF points from the bottom-left of a 612 x 792 page; y is the text baseline.
 # Tune them with `lw calibrate <key>`, which writes a test fill with a grid.
 
-statutory_states: [CA, AZ, NV, UT, TX, GA, MI, MO, MS, WY, FL]
+statutory_states: []
 
 # Notarization is required on every waiver (confirmed). A state entry can override this.
 notary_required: true
