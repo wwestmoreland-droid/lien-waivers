@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}Waiver #{{ w.id }}{% endblock %}
+{% block content %}
+{% set sc = w.subcontract %}{% set p = w.payable %}
+{% set editor = user.role in ('Admin', 'AP') %}
+<h1>{{ WaiverType(w.type).label }} waiver #{{ w.id }}</h1>
+<p class="sub"><a href="/subs/{{ sc.id }}">{{ sc.vendor.name }}</a> · <a href="/jobs/{{ sc.project.number }}">{{ sc.project.number }} {{ sc.project.name }}</a> · {{ w.state or '' }}
+ · <span class="badge">{{ w.status|replace('_', ' ') }}</span></p>
+{% if msg %}<div class="warnbox">{{ msg }}</div>{% endif %}
+{% if w.review_reason %}<div class="warnbox"><strong>Blocked:</strong> {{ w.review_reason }}</div>{% endif %}
+
+<div class="grid2">
+<div>
+  <div class="panel">
+    <dl class="kv">
+      <dt>Invoice</dt><dd>{{ p.invoice_no or '—' }} · {{ p.amount|money }} · received {{ p.date_received|fdate }}{% if p.paid_date %} · paid {{ p.paid_date|fdate }}{% endif %}</dd>
+      <dt>Amount on waiver</dt><dd>{{ w.amount|money if w.amount is not none else 'none (unconditional final has no amount)' }}</dd>
+      {% if not WaiverType(w.type).is_final %}
+      <dt>Through date</dt><dd>{{ w.through_date|fdate or '—' }}
+        {% if w.through_date_is_fallback %}<div class="warnbox small">This is the invoice's Date Received, used as a fallback. Change it to the billed-through or period-end date if you know it.</div>{% endif %}</dd>
+      {% endif %}
+      <dt>Template</dt><dd>{{ w.template_key or 'none yet' }}{% if notary_required %} · notarization required{% endif %}</dd>
+      <dt>Sent</dt><dd>{{ w.sent_at|fdate or '—' }}</dd>
+      <dt>Received</dt><dd>{{ w.received_at|fdate or '—' }}{% if w.signed_pdf_path %} · <a href="/waivers/{{ w.id }}/signed" target="_blank">signed copy</a>{% endif %}</dd>
+      <dt>Reviewer</dt><dd>{{ w.reviewer_email or '—' }}</dd>
+    </dl>
+  </div>
+
+  {% if editor %}
+  <div class="panel">
+    <h2 style="margin-top:0">Actions</h2>
+    {% if editable %}
+      {% if not WaiverType(w.type).is_final %}
+      <form method="post" action="/waivers/{{ w.id }}/through-date" class="filters">
+        <label>Through date <input type="date" name="value" value="{{ w.through_date.isoformat() if w.through_date }}" required></label>
+        <button class="btn">Save and regenerate PDF</button>
+      </form>
+      {% endif %}
+      {% if w.type == 'CONDITIONAL_FINAL' %}
+      <form method="post" action="/waivers/{{ w.id }}/exceptions">
+        <label class="small muted">Exceptions (pending COs and disputed items)</label><br>
+        <textarea name="value" rows="3" style="width:100%">{{ w.exceptions_text or '' }}</textarea>
+        <button class="btn">Save and regenerate PDF</button>
+      </form>
+      {% endif %}
+      <div class="row-actions" style="margin-top:10px">
+        <form class="inline" method="post" action="/waivers/{{ w.id }}/regenerate"><button class="btn">Regenerate PDF</button></form>
+        {% if w.status == 'draft' %}<form class="inline" method="post" action="/waivers/{{ w.id }}/mark-sent"><button class="btn">Mark sent (sent outside the app)</button></form>{% endif %}
+      </div>
+    {% endif %}
+    {% if w.status in ('sent', 'rejected', 'draft') %}
+      <form method="post" action="/waivers/{{ w.id }}/received" enctype="multipart/form-data" class="filters" style="margin-top:10px">
+        <label>Signed copy <input type="file" name="file" accept=".pdf,image/*" required></label>
+        <button class="btn primary">Mark received</button>
+      </form>
+    {% endif %}
+  {% endif %}
+  {% if w.status == 'received' and (editor or (user.role == 'PM' and (sc.project.pm_email or '')|lower == user.email)) %}
+    {% if not editor %}<div class="panel">{% endif %}
+    <div class="row-actions" style="margin-top:10px">
+      <form class="inline" method="post" action="/waivers/{{ w.id }}/accept"><button class="btn primary">Accept</button></form>
+      <form class="inline" method="post" action="/waivers/{{ w.id }}/reject">
+        <select name="reason">{% for r in reasons %}<option>{{ r }}</option>{% endfor %}</select>
+        <button class="btn danger">Reject</button>
+      </form>
+    </div>
+    <p class="small muted">Check it's signed{% if notary_required %}, notarized{% endif %}, and has the right type, amount, through date and project.</p>
+    {% if not editor %}</div>{% endif %}
+  {% endif %}
+  {% if editor %}
+    {% if w.status not in ('void', 'accepted') %}
+      <form method="post" action="/waivers/{{ w.id }}/void" class="filters" style="margin-top:10px">
+        <input name="reason" placeholder="Reason for voiding" required size="30"><button class="btn sm danger">Void</button>
+      </form>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <div class="panel">
+    <h2 style="margin-top:0">History</h2>
+    <div class="table-wrap"><table>
+      <tr><th>When</th><th>Who</th><th>What</th><th>Status</th><th>Note</th></tr>
+      {% for e in w.events %}
+      <tr><td class="small">{{ e.at|fdate }}</td><td class="small">{{ e.actor }}</td><td>{{ e.action|replace('_', ' ') }}</td>
+        <td class="small">{% if e.from_status != e.to_status %}{{ e.from_status or '' }} → {{ e.to_status }}{% endif %}</td>
+        <td class="small muted">{{ e.note or '' }}{% if e.details %} {{ e.details }}{% endif %}</td></tr>
+      {% endfor %}
+    </table></div>
+  </div>
+
+  {% if others %}
+  <div class="panel">
+    <h2 style="margin-top:0">Other waivers for this sub on this job</h2>
+    {% for o in others %}<div><a href="/waivers/{{ o.id }}">#{{ o.id }} {{ WaiverType(o.type).label }}</a> · {{ o.payable.invoice_no or '' }} · {{ o.status }}</div>{% endfor %}
+  </div>
+  {% endif %}
+</div>
+
+<div class="panel" style="padding:0;min-height:600px">
+  {% if w.generated_pdf_path %}
+  <iframe src="/waivers/{{ w.id }}/pdf" title="Waiver PDF" style="width:100%;height:900px;border:0;border-radius:10px"></iframe>
+  {% else %}
+  <p class="muted" style="padding:16px">No PDF yet. {{ w.review_reason or '' }}</p>
+  {% endif %}
+</div>
+</div>
+{% endblock %}

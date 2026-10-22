@@ -36,8 +36,8 @@ class ReportRow:
     ctc: Decimal
     pct_complete: Decimal | None
     status: str
-    open_waivers: int | str = ""      # filled in Phase 2
-    last_waiver_status: str = ""     # filled in Phase 2
+    open_waivers: int = 0
+    last_waiver_status: str = ""
 
 
 MONEY_FIELDS = ("original_contract", "approved_cos", "pending_cos", "revised_contract", "billed", "paid", "hold",
@@ -60,6 +60,9 @@ def report_rows(db: Session, project_number: str | None = None) -> list[ReportRo
          .order_by(Project.number))
     if project_number:
         q = q.where(Project.number == project_number)
+    from app.waivers.service import sub_waiver_summary
+
+    summary = sub_waiver_summary(db)
     rows = []
     for sc in db.scalars(q):
         c = compute_for_subcontract(sc)
@@ -70,6 +73,8 @@ def report_rows(db: Session, project_number: str | None = None) -> list[ReportRo
             revised_contract=c.revised_contract, billed=c.billed_to_date, paid=c.paid_to_date,
             hold=c.hold_total, retainage_held=max(c.retention_owed or ZERO, ZERO), ctc=c.cost_to_complete,
             pct_complete=c.pct_complete, status=c.status,
+            open_waivers=summary.get(sc.id, {}).get("open", 0),
+            last_waiver_status=summary.get(sc.id, {}).get("last_received", ""),
         ))
     rows.sort(key=lambda r: (r.project_number, r.vendor.lower()))
     return rows

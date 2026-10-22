@@ -3,7 +3,8 @@
 {% block content %}
 <h1>Queues</h1>
 <p class="sub">Rows the app couldn't place on its own. Nothing here is skipped; it waits until someone maps it.
-Verification, Unmatched inbox and New contacts queues come in Phases 3 and 4.</p>
+Verification, Unmatched inbox and New contacts queues come in Phases 3 and 4.
+The retention check is cleared by marking the right invoice as the retention invoice on the sub's page.</p>
 {% set editor = user.role in ('Admin', 'AP') %}
 
 <h2 id="ap">Unmatched AP rows ({{ unmatched|length }})</h2>
@@ -79,7 +80,10 @@ Verification, Unmatched inbox and New contacts queues come in Phases 3 and 4.</p
   {% for r in reviews %}
   <tr><td><span class="badge {{ 'bad' if r.kind == 'over_billed' else 'warn' }}">{{ r.kind|replace('_', ' ') }}</span></td>
     <td style="white-space:nowrap">{{ r.project_number }}</td>
-    <td>{% if r.ref_type == 'subcontract' %}<a href="/subs/{{ r.ref_id }}">{{ r.message }}</a>{% else %}{{ r.message }}{% endif %}</td>
+    <td>{% if r.ref_type == 'subcontract' %}<a href="/subs/{{ r.ref_id }}">{{ r.message }}</a>
+      {% elif r.ref_type == 'waiver' %}<a href="/waivers/{{ r.ref_id }}">{{ r.message }}</a>
+      {% elif r.ref_type == 'payable' and payable_subs.get(r.ref_id) %}<a href="/subs/{{ payable_subs[r.ref_id] }}">{{ r.message }}</a>
+      {% else %}{{ r.message }}{% endif %}</td>
     <td class="small">{{ r.assignee_email or '' }}</td><td class="small">{{ r.created_at|fdate }}</td>
     <td>{% if editor %}<div class="row-actions">
       <form class="inline" method="post" action="/queues/review/{{ r.id }}/resolve"><input name="note" placeholder="Note (optional)" size="16"><button class="btn sm">Resolved</button></form>

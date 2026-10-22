@@ -10,7 +10,7 @@
     <td class="n">{{ r.paid|money }}</td><td class="n">{{ r.retainage_held|money }}</td><td class="n">{{ r.hold|money }}</td>
     <td class="n">{{ r.ctc|money }}</td><td class="n">{{ r.pct_complete|pct }}</td>
     <td><span class="badge {{ status_badge.get(r.status, '') }}">{{ r.status|replace('_', ' ') }}</span></td>
-    <td class="muted small">Phase 2</td><td class="muted small">Phase 2</td>
+    <td class="n">{% if r.open_waivers %}<a href="/waivers?status=open&q={{ r.vendor|urlencode }}&project={{ r.project_number }}">{{ r.open_waivers }}</a>{% else %}0{% endif %}</td><td class="small">{{ r.last_waiver_status }}</td>
   </tr>
   {% endfor %}
   {% if totals is defined %}

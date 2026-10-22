@@ -15,7 +15,7 @@ from app.db.models import SyncRun
 from app.db.session import SessionLocal
 from app.jobs import scheduler
 from app.logs import configure_logging
-from app.web import routes
+from app.web import routes, waiver_routes
 from app.web.templating import templates
 
 log = structlog.get_logger()
@@ -37,6 +37,7 @@ def create_app() -> FastAPI:
     app.mount("/static", StaticFiles(directory=str(Path(routes.__file__).parent / "static")), name="static")
     app.include_router(auth.router)
     app.include_router(routes.router)
+    app.include_router(waiver_routes.router)
 
     @app.exception_handler(auth.NotAuthenticated)
     async def _not_auth(request: Request, _exc):

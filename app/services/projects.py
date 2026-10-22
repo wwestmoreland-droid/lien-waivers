@@ -42,11 +42,15 @@ def picker_label(p: Project) -> str:
 
 
 def open_items_count(db: Session, project: Project) -> int:
-    """Open items that untracking would pause. Waivers are added to this in Phase 2."""
-    return db.scalar(
-        select(func.count(ReviewItem.id)).where(ReviewItem.project_number == project.number,
-                                                ReviewItem.status == "open")
-    ) or 0
+    """Open waivers and review items that untracking would pause."""
+    from app.db.models import Subcontract, Waiver
+    from app.waivers.types import OPEN_STATUSES
+
+    reviews = db.scalar(select(func.count(ReviewItem.id)).where(ReviewItem.project_number == project.number,
+                                                                ReviewItem.status == "open")) or 0
+    waivers = db.scalar(select(func.count(Waiver.id)).join(Subcontract).where(
+        Subcontract.project_id == project.id, Waiver.status.in_([s.value for s in OPEN_STATUSES]))) or 0
+    return reviews + waivers
 
 
 def set_tracked(db: Session, project: Project, tracked: bool, actor: str) -> None:

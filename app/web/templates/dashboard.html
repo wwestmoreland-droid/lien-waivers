@@ -4,7 +4,7 @@
 <div class="row-actions" style="justify-content: space-between">
   <div>
     <h1>Dashboard</h1>
-    <p class="sub">Tracked projects only. Waiver status and payment holds appear here once Phase 2 is in.</p>
+    <p class="sub">Tracked projects only.</p>
   </div>
   {% with running=false, message="" %}{% include "partials/sync_status.html" %}{% endwith %}
 </div>
@@ -21,6 +21,14 @@
   <div class="card"><div class="k">Paid</div><div class="v">{{ totals.paid|money }}</div></div>
   <div class="card"><div class="k">Cost to complete</div><div class="v">{{ totals.ctc|money }}</div></div>
   <div class="card"><div class="k">On hold</div><div class="v">{{ totals.hold|money }}</div></div>
+</div>
+
+<div class="cards">
+  <a class="card {{ 'alert' if waiver_counts.get('needs_review') }}" href="/waivers?status=needs_review"><div class="k">Waivers blocked</div><div class="v">{{ waiver_counts.get('needs_review', 0) }}</div></a>
+  <a class="card" href="/waivers?status=draft"><div class="k">Waivers ready to send</div><div class="v">{{ waiver_counts.get('draft', 0) }}</div></a>
+  <a class="card" href="/waivers?status=sent"><div class="k">Waiting on sub</div><div class="v">{{ waiver_counts.get('sent', 0) + waiver_counts.get('rejected', 0) }}</div></a>
+  <a class="card {{ 'alert' if waiver_counts.get('received') }}" href="/waivers?status=received"><div class="k">Received, to verify</div><div class="v">{{ waiver_counts.get('received', 0) }}</div></a>
+  <a class="card" href="/waivers?status=accepted"><div class="k">Accepted</div><div class="v">{{ waiver_counts.get('accepted', 0) }}</div></a>
 </div>
 
 <div class="cards">

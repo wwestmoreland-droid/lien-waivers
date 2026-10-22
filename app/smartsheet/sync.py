@@ -39,7 +39,7 @@ from app.matching.normalize import (
     to_datetime,
     to_decimal,
 )
-from app.services.settings_store import get_setting
+from app.services.reviews import upsert_review
 from app.smartsheet.client import SheetRow, SheetSource
 
 log = structlog.get_logger()
@@ -89,6 +89,11 @@ def run_sync(db: Session, source: SheetSource, trigger: str = "schedule",
         _sync_change_orders(db, sheets["change_orders"], tracked, stats)
         _sync_payables(db, sheets["ar_ap"], tracked, backfill, run, stats)
         _compute_ctc_and_reviews(db, tracked, stats)
+
+        from app.waivers import service as waivers  # imported here to keep sync importable on its own
+        waivers.process_events(db, stats)
+        waivers.refresh_payable_reviews(db)
+        waivers.recheck_blocked(db)
 
         for number in backfill & tracked.keys():
             tracked[number].backfilled_at = now()
@@ -380,28 +385,6 @@ def _sync_payables(db: Session, rows: list[SheetRow], tracked: dict[str, Project
 
 
 # ---------------------------------------------------------------- CTC + review items
-
-def upsert_review(db: Session, kind: str, ref_type: str, ref_id: int, project_number: str | None,
-                  message: str, active: bool, stats) -> None:
-    item = db.scalar(select(ReviewItem).where(ReviewItem.kind == kind, ReviewItem.ref_type == ref_type,
-                                              ReviewItem.ref_id == ref_id))
-    if active:
-        if item is None:
-            db.add(ReviewItem(kind=kind, ref_type=ref_type, ref_id=ref_id, project_number=project_number,
-                              message=message, assignee_email=get_setting(db, "default_reviewer_email")))
-            stats[f"review_{kind}_new"] += 1
-        elif item.status == "resolved" and item.resolved_by == "system:sync":
-            item.status = "open"
-            item.resolved_by = None
-            item.resolved_at = None
-            item.message = message
-        elif item.status == "open":
-            item.message = message
-    elif item is not None and item.status == "open":
-        item.status = "resolved"
-        item.resolved_by = "system:sync"
-        item.resolved_at = now()
-
 
 def _compute_ctc_and_reviews(db: Session, tracked: dict[str, Project], stats) -> None:
     db.expire_all()  # reload relationships after the inserts above

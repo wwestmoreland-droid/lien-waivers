@@ -2,13 +2,13 @@
 
 This app replaces the Zapier + Smartsheet lien waiver automation. It keeps its own database as the source of record. Smartsheet is input only, and **the app never writes to Smartsheet**: the client only issues GET requests and refuses any other verb.
 
-## Status: Phase 1 of 5
+## Status: Phases 1 and 2 of 5
 
 | Phase | Scope | State |
 |---|---|---|
 | 1 | Smartsheet sync, Projects picker, data model, vendor matching + Unmatched queue, CTC engine + report, read-only dashboard, Google sign-in, Railway deploy files | **Done** |
-| 2 | Waiver decision engine, template registry, PDF filling + `calibrate`, Waivers page | Next. Needs the three PDF templates |
-| 3 | Mailboxes (Google sign-in per mailbox), Email center, outbound requests, inbound matching, verification, reminders | |
+| 2 | Waiver decision engine, template registry, PDF filling + `calibrate`, Waivers page | **Done** |
+| 3 | Mailboxes (Google sign-in per mailbox), Email center, outbound requests, inbound matching, verification, reminders | Next |
 | 4 | Contact logging (contracts@, ap@ via wwestmoreland@), supplier disclosure for major trades | |
 | 5 | Payment status view (warn only), auto-send switches, deployment runbook | |
 
@@ -29,6 +29,21 @@ This app replaces the Zapier + Smartsheet lien waiver automation. It keeps its o
 
 The CTC engine was run on real Smartsheet rows for P--IL-102125-1 (IMAGE Studios, Palatine), pulled read-only. It matched Smartsheet's Cost to Complete on 11 of 12 subs. The 12th, Iannuzzi Millwork, shows **$0** in the app and **$6,764** in Smartsheet. The subcontract is spelled "Ianuzzi" and the AP row "Iannuzzi", so Smartsheet's formula never counted the $6,764 that was billed and paid. That job's 16 other AP rows (BP Environmental Services, Palatine Builders Supply, Armorshield, GPRS, Foundation Building Materials) have no subcontract, and the Unmatched queue lists them until each vendor is marked once as a direct purchase. One approved Internal CO ($649.53, "Additional Lighting Controls") has no sub selected in Smartsheet, so it also shows in the Unmatched queue.
 
+## How it works (Phase 2)
+
+- **Triggers.** After each sync, every new `approved` or `paid` event on a tracked, matched payable runs through the rules. Events loaded as history (backfill) never create waivers. Events on unmatched rows wait until the row is mapped, so nothing is lost.
+- **Rules** (`app/waivers/decision.py`, CTC as of that payable):
+  - Approved, CTC after > 0: nothing yet (conditional partials are off). Turning them on needs a conditional partial template.
+  - Approved, CTC after = 0: **Conditional final** for that invoice. Pending Internal COs and invoices on Hold for the sub are listed as EXCEPTIONS, and a review item asks the PM to confirm.
+  - Paid: **Unconditional partial** for the amount paid, or **Unconditional final** if the CTC after it is 0.
+  - Approved and paid in the same sync: only the unconditional waiver.
+  - Retention sub hits $0 on an invoice that isn't the retention invoice: **Review** (retention check), no waiver. Marking the invoice as the retention invoice on the sub's page re-runs the rules.
+  - Over-billed, no contract value, or invoice on Hold: **Review**, no waiver.
+  - Each (payable, type) can have only one waiver, so re-running never duplicates.
+- **Templates** (`templates/pdf/registry.yaml`) are keyed by (state, type). CA, AZ, NV, UT, TX, GA, MI, MO, MS, WY and FL need a statutory form. Until one is registered, waivers on those jobs are **blocked**: "Statutory form required for {STATE}; add template." To add a form, put the PDF in `templates/pdf/<STATE>/`, add an entry for it, tune the positions with `lw calibrate`, and click **Reload registry and recheck** on Settings → Waiver templates.
+- **PDFs** are filled by drawing on top of the flat forms (reportlab + pypdf). The app fills: project name, project address, amount, through date (partials), exceptions (conditional final), today's date, the sub's company name, and "Buildout Pros LLC" on the unconditional final, where the form left it blank. The sub's address, signature, printed name and the notary block stay blank for the sub.
+- **Waivers page**: filter by status, project and type. Preview the PDF, change the through date (it defaults to Date Received and is flagged as a fallback), edit exceptions, regenerate, mark sent, upload the signed copy, accept or reject, void. Edits are only allowed before sending. Every change is added to the waiver's history; nothing is overwritten.
+
 ## Running locally
 
 ```bash
@@ -48,14 +63,15 @@ CLI (`lw`):
 | `lw migrate` | Create or upgrade the schema |
 | `lw sync` | One sync now |
 | `lw track P--IL-102125-1 ...` | Turn tracking on from the command line |
-| `lw backfill [--project N]` | Reload history for tracked projects (no emails), print CTC per sub, and list paid payables with no waiver recorded in Smartsheet's "Waiver Created" column. From Phase 2 on, this checks the app's own waiver records instead. |
+| `lw backfill [--project N]` | Reload history for tracked projects (no waivers, no emails), print CTC per sub, and list waivers the rules say were owed but that neither the app nor Smartsheet's "Waiver Created" column has |
+| `lw calibrate [key] [--out-dir .]` | Write test fills with a coordinate grid for tuning field positions |
 | `lw report --out ctc.xlsx` | Write the CTC report |
 
 ## Deploying to Railway
 
 1. Push this repo to GitHub. In Railway: **New Project → Deploy from GitHub repo**. Railway builds from the `Dockerfile` (`railway.toml` sets the health check to `/health` and the service to one replica).
 2. **+ New → Database → PostgreSQL**. In the app service's Variables, add `DATABASE_URL` = `${{Postgres.DATABASE_URL}}`.
-3. App service → **Settings → Volumes → Add volume**, mount path `/data`. Phase 2 stores PDFs and attachments there.
+3. App service → **Settings → Volumes → Add volume**, mount path `/data`. Generated and signed waiver PDFs are stored there; without the volume they'd be lost on every deploy.
 4. App service → **Settings → Networking → Generate domain** (or add a custom domain). Set `APP_BASE_URL` to that URL, e.g. `https://lienwaivers.up.railway.app`.
 5. Variables: `SECRET_KEY`, `SMARTSHEET_TOKEN`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `TIMEZONE=America/Chicago`, and in later phases `ANTHROPIC_API_KEY` and `FERNET_KEY`. Do **not** set `DEV_AUTH_EMAIL` in production.
 6. Deploy. The container runs `lw migrate` and then starts the web server, and the scheduler runs inside it. Keep the service at one replica; a database lock also stops two syncs from running at once.

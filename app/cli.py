@@ -5,7 +5,7 @@ import typer
 from sqlalchemy import select
 
 from app.ctc import report
-from app.db.models import Payable, Project
+from app.db.models import Payable, Project, Waiver
 from app.db.session import session_scope
 from app.logs import configure_logging
 
@@ -51,9 +51,10 @@ def track(numbers: list[str], actor: str = typer.Option("cli", help="Recorded in
 
 @cli.command("backfill")
 def backfill(project: list[str] = typer.Option(None, help="Project number(s); default all tracked")) -> None:
-    """Load history for tracked projects, compute CTC, and list paid payables that look like they
-    never got a waiver. Creates no emails."""
+    """Load history for tracked projects, compute CTC, and list waivers that appear to be missing.
+    Creates no waivers and no emails."""
     from app.services.sync_runner import sync_now
+    from app.waivers.service import expected_waiver_types
 
     configure_logging()
     with session_scope() as db:
@@ -70,19 +71,41 @@ def backfill(project: list[str] = typer.Option(None, help="Project number(s); de
             for r in rows:
                 typer.echo(f"  {r.vendor[:40]:40} revised {r.revised_contract:>12,.2f}  billed {r.billed:>12,.2f}  "
                            f"CTC {r.ctc:>12,.2f}  {r.status}")
-            # Until Phase 2 holds the app's own waiver records, Smartsheet's "Waiver Created"
-            # column is the only signal of what was sent before.
-            missing = db.scalars(select(Payable).where(
-                Payable.project_number == number, Payable.paid_date.is_not(None),
-                Payable.match_status == "matched", Payable.deleted_in_source.is_(False),
-                (Payable.waiver_created_source.is_(None)) | (Payable.waiver_created_source == ""),
-            ).order_by(Payable.paid_date)).all()
+            # History loaded by a backfill has no waivers in the app, so for those rows the only
+            # record of a past waiver is Smartsheet's "Waiver Created" column.
+            missing = []
+            for p in db.scalars(select(Payable).where(
+                    Payable.project_number == number, Payable.match_status == "matched",
+                    Payable.deleted_in_source.is_(False)).order_by(Payable.date_received)):
+                have = {w.type for w in db.scalars(select(Waiver).where(Waiver.payable_id == p.id))}
+                for t in expected_waiver_types(db, p):
+                    if t.value not in have and not (p.waiver_created_source or "").strip():
+                        missing.append((p, t))
             if missing:
-                typer.echo(f"  Paid with no waiver recorded in Smartsheet ({len(missing)}):")
-                for p in missing:
-                    typer.echo(f"    {p.paid_date}  {p.vendor.name if p.vendor else p.vendor_parsed}  "
-                               f"inv {p.invoice_no}  ${p.amount:,.2f}")
+                typer.echo(f"  Waivers that appear to be missing ({len(missing)}):")
+                for p, t in missing:
+                    typer.echo(f"    {t.label:22} {p.vendor.name[:34]:34} inv {p.invoice_no or '-':16} "
+                               f"${p.amount:>12,.2f}  received {p.date_received}  paid {p.paid_date or '-'}")
             typer.echo("")
+
+
+@cli.command("calibrate")
+def calibrate(key: str = typer.Argument(None, help="Template key, e.g. default/conditional_final; omit for all"),
+              out_dir: str = typer.Option(".", help="Where to write the PDFs")) -> None:
+    """Render test fills with a coordinate grid so field positions can be tuned in registry.yaml."""
+    from pathlib import Path
+
+    from app.waivers.pdf import SAMPLE_VALUES, fill
+    from app.waivers.registry import load_registry
+
+    reg = load_registry()
+    keys = [key] if key else list(reg.templates)
+    for k in keys:
+        if k not in reg.templates:
+            raise typer.BadParameter(f"Unknown template {k}. Known: {', '.join(reg.templates)}")
+        path = Path(out_dir) / f"calibrate-{k.replace('/', '-')}.pdf"
+        path.write_bytes(fill(reg.templates[k], SAMPLE_VALUES, grid=True))
+        typer.echo(f"Wrote {path}")
 
 
 @cli.command("report")

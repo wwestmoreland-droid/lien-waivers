@@ -1,7 +1,9 @@
 import os
+import tempfile
 
 os.environ.setdefault("RUN_SCHEDULER", "false")
 os.environ.setdefault("DEV_AUTH_EMAIL", "wwestmoreland@buildoutpros.com")
+os.environ["DATA_DIR"] = tempfile.mkdtemp(prefix="lw-test-")
 
 import pytest
 from sqlalchemy import create_engine

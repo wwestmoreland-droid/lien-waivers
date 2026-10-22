@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Waivers{% endblock %}
+{% block content %}
+<h1>Waivers</h1>
+<p class="sub">Created automatically when a payable is approved or paid. Emails come in Phase 3. Until then, download the PDF, send it yourself, then click "Mark sent".</p>
+{% set sbadge = {'needs_review': 'bad', 'draft': 'new', 'sent': 'warn', 'received': 'warn', 'accepted': 'ok', 'rejected': 'bad', 'void': ''} %}
+
+<div class="tabs">
+  <a href="/waivers?status=open" class="{{ 'on' if f.status == 'open' }}">Open</a>
+  {% for s in statuses %}<a href="/waivers?status={{ s.value }}" class="{{ 'on' if f.status == s.value }}">{{ s.value|replace('_', ' ')|capitalize }} ({{ counts.get(s.value, 0) }})</a>{% endfor %}
+  <a href="/waivers?status=" class="{{ 'on' if not f.status }}">All</a>
+</div>
+
+<form class="filters" method="get">
+  <input type="hidden" name="status" value="{{ f.status }}">
+  <input type="search" name="q" value="{{ f.q }}" placeholder="Sub name">
+  <select name="project"><option value="">All projects</option>{% for p in projects %}<option value="{{ p.number }}" {{ 'selected' if f.project == p.number }}>{{ p.number }} {{ p.name or '' }}</option>{% endfor %}</select>
+  <select name="type"><option value="">All types</option>{% for t in types %}<option value="{{ t.value }}" {{ 'selected' if f.type == t.value }}>{{ t.label }}</option>{% endfor %}</select>
+  <button class="btn">Filter</button>
+</form>
+
+<div class="table-wrap"><table>
+  <tr><th>#</th><th>Sub</th><th>Project</th><th>Type</th><th>Invoice</th><th class="n">Amount</th><th>Through</th><th>Status</th><th>Created</th><th></th></tr>
+  {% for w in rows %}
+  <tr>
+    <td><a href="/waivers/{{ w.id }}">{{ w.id }}</a></td>
+    <td><a href="/subs/{{ w.subcontract_id }}">{{ w.subcontract.vendor.name }}</a></td>
+    <td style="white-space:nowrap">{{ w.subcontract.project.number }}</td>
+    <td>{{ WaiverType(w.type).label }}</td>
+    <td>{{ w.payable.invoice_no or '' }}</td>
+    <td class="n">{{ w.amount|money }}</td>
+    <td>{% if not WaiverType(w.type).is_final %}{{ w.through_date|fdate }}{% if w.through_date_is_fallback and w.through_date %} <span class="badge warn" title="Date received, not a billed-through date">fallback</span>{% endif %}{% endif %}</td>
+    <td><span class="badge {{ sbadge.get(w.status, '') }}">{{ w.status|replace('_', ' ') }}</span>
+      {% if w.review_reason %}<div class="small" style="color:var(--bad)">{{ w.review_reason }}</div>{% endif %}</td>
+    <td class="small">{{ w.created_at|fdate }}</td>
+    <td>{% if w.generated_pdf_path %}<a class="btn sm" href="/waivers/{{ w.id }}/pdf" target="_blank">PDF</a>{% endif %}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="10" class="muted">No waivers here.</td></tr>
+  {% endfor %}
+</table></div>
+{% endblock %}

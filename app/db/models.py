@@ -287,6 +287,7 @@ class PayableEvent(Base):
     detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     sync_run_id: Mapped[int | None] = mapped_column(ForeignKey("sync_runs.id"))
     processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    outcome: Mapped[str | None] = mapped_column(String(255))
 
 
 class CtcSnapshot(Base):
@@ -359,3 +360,59 @@ class JobLock(Base):
     name: Mapped[str] = mapped_column(String(50), primary_key=True)
     holder: Mapped[str] = mapped_column(String(100))
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class Waiver(Base):
+    """One waiver owed for one payable. Unique on (payable_id, type) so re-processing an event
+    never creates a second one. Every status change is appended to waiver_events."""
+
+    __tablename__ = "waivers"
+    __table_args__ = (UniqueConstraint("payable_id", "type"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    payable_id: Mapped[int] = mapped_column(ForeignKey("payables.id"))
+    subcontract_id: Mapped[int] = mapped_column(ForeignKey("subcontracts.id"))
+    type: Mapped[str] = mapped_column(String(30))  # WaiverType
+    state: Mapped[str | None] = mapped_column(String(2))
+    template_key: Mapped[str | None] = mapped_column(String(100))
+    amount: Mapped[Decimal | None] = mapped_column(Money)
+    through_date: Mapped[date | None] = mapped_column(Date)
+    through_date_is_fallback: Mapped[bool] = mapped_column(Boolean, default=True)
+    exceptions_text: Mapped[str | None] = mapped_column(Text)
+    # needs_review / draft / sent / received / accepted / rejected / void
+    status: Mapped[str] = mapped_column(String(20), default="draft")
+    review_reason: Mapped[str | None] = mapped_column(Text)
+    pdf_version: Mapped[int] = mapped_column(Integer, default=0)
+    generated_pdf_path: Mapped[str | None] = mapped_column(String(500))
+    signed_pdf_path: Mapped[str | None] = mapped_column(String(500))
+    trigger_event_id: Mapped[int | None] = mapped_column(ForeignKey("payable_events.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    received_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reviewer_email: Mapped[str | None] = mapped_column(String(255))
+
+    payable: Mapped[Payable] = relationship()
+    subcontract: Mapped[Subcontract] = relationship()
+    events: Mapped[list[WaiverEvent]] = relationship(back_populates="waiver", order_by="WaiverEvent.id")
+
+    @property
+    def is_open(self) -> bool:
+        return self.status in ("needs_review", "draft", "sent", "received", "rejected")
+
+
+class WaiverEvent(Base):
+    """Append-only history for a waiver."""
+
+    __tablename__ = "waiver_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    waiver_id: Mapped[int] = mapped_column(ForeignKey("waivers.id"))
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    actor: Mapped[str] = mapped_column(String(255))
+    action: Mapped[str] = mapped_column(String(50))
+    from_status: Mapped[str | None] = mapped_column(String(20))
+    to_status: Mapped[str | None] = mapped_column(String(20))
+    note: Mapped[str | None] = mapped_column(Text)
+    details: Mapped[dict | None] = mapped_column(JSON)
+
+    waiver: Mapped[Waiver] = relationship(back_populates="events")

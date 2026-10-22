@@ -1,0 +1,56 @@
+# Waiver template registry, keyed by (state, waiver type).
+#
+# Lookup: an exact state entry wins. Otherwise `default` is used, unless the project's state
+# is in statutory_states. Those states need their own counsel-reviewed form, and without one
+# the waiver goes to the Review queue ("Statutory form required for {STATE}; add template.").
+#
+# The sub's address, signature, printed name and the notary block are left blank for the sub.
+# Coordinates are PDF points from the bottom-left of a 612 x 792 page; y is the text baseline.
+# Tune them with `lw calibrate <key>`, which writes a test fill with a grid.
+
+statutory_states: [CA, AZ, NV, UT, TX, GA, MI, MO, MS, WY, FL]
+
+# Notarization is required on every waiver (confirmed). A state entry can override this.
+notary_required: true
+
+templates:
+  default/unconditional_partial:
+    state: default
+    type: UNCONDITIONAL_PARTIAL
+    file: default/partial.pdf
+    # Buildout Pros LLC is already printed on this form.
+    fields:
+      project_name:    {x: 200, y: 606, max_width: 314}
+      project_address: {x: 186, y: 574, max_width: 258}
+      through_date:    {x: 272, y: 478, max_width: 158}
+      amount:          {x: 245, y: 426, max_width: 102, format: number}
+      date:            {x: 130, y: 249, max_width: 120}
+      sub_name:        {x: 346, y: 352, max_width: 174}
+
+  default/conditional_final:
+    state: default
+    type: CONDITIONAL_FINAL
+    file: default/conditional_final.pdf
+    # Buildout Pros LLC is already printed on this form.
+    fields:
+      project_name:    {x: 184, y: 629, max_width: 344}
+      project_address: {x: 168, y: 606, max_width: 297}
+      amount:          {x: 303, y: 512, max_width: 124, format: number}
+      exceptions:      {x: 76, y: 318, max_width: 462, lines: 2, line_gap: 20}
+      date:            {x: 112, y: 181, max_width: 102}
+      sub_name:        {x: 317, y: 264, max_width: 221}
+
+  default/unconditional_final:
+    state: default
+    type: UNCONDITIONAL_FINAL
+    file: default/unconditional_final.pdf
+    fields:
+      # This line is blank on the form; the app fills it.
+      contracted_by:   {x: 282, y: 652, max_width: 256}
+      project_name:    {x: 184, y: 629, max_width: 344}
+      project_address: {x: 168, y: 606, max_width: 297}
+      date:            {x: 113, y: 246, max_width: 102}
+      sub_name:        {x: 320, y: 329, max_width: 219}
+
+  # CONDITIONAL_PARTIAL has no template yet and stays behind the feature flag
+  # (Settings > Conditional partial waivers, off by default).

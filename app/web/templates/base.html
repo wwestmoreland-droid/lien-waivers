@@ -16,6 +16,7 @@
     <a href="/" class="{{ 'on' if path == '/' }}">Dashboard</a>
     <a href="/projects" class="{{ 'on' if path.startswith('/projects') }}">Projects</a>
     <a href="/jobs" class="{{ 'on' if path.startswith('/jobs') or path.startswith('/subs') }}">Jobs</a>
+    <a href="/waivers" class="{{ 'on' if path.startswith('/waivers') }}">Waivers</a>
     <a href="/queues" class="{{ 'on' if path.startswith('/queues') }}">Queues</a>
     <a href="/sync-runs" class="{{ 'on' if path.startswith('/sync-runs') }}">Sync log</a>
     <a href="/settings" class="{{ 'on' if path.startswith('/settings') }}">Settings</a>

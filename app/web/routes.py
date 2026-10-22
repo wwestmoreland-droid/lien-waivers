@@ -26,6 +26,7 @@ from app.db.models import (
     User,
     Vendor,
     VendorAlias,
+    Waiver,
 )
 from app.db.session import get_db
 from app.jobs import scheduler
@@ -35,6 +36,7 @@ from app.services.audit import audit
 from app.services.locks import JobAlreadyRunning
 from app.services.settings_store import get_setting, set_setting
 from app.services.sync_runner import sync_now
+from app.waivers import service as waiver_service
 from app.web.templating import templates
 
 router = APIRouter()
@@ -77,7 +79,9 @@ def dashboard(request: Request, db: Session = Depends(get_db), user: User = Depe
     tracked = db.scalars(select(Project).where(Project.is_tracked.is_(True)).order_by(Project.number)).all()
     by_job = report.grouped(rows, "job")
     new_projects = [p for p in project_svc.picker_projects(db) if not p.is_tracked and not p.ever_tracked]
-    return render(request, "dashboard.html", user, totals=totals, status_counts=status_counts, tracked=tracked,
+    waiver_counts = dict(db.execute(select(Waiver.status, func.count(Waiver.id)).join(Subcontract).join(Project)
+                                    .where(Project.is_tracked.is_(True)).group_by(Waiver.status)).all())
+    return render(request, "dashboard.html", user, waiver_counts=waiver_counts, totals=totals, status_counts=status_counts, tracked=tracked,
                   by_job=by_job, counts=queue_counts(db), last_sync=_last_sync(db),
                   next_sync=scheduler.next_run_time(), new_projects=new_projects,
                   over_billed=[r for r in rows if r.status == "over_billed"])
@@ -183,6 +187,8 @@ def toggle_retention(pid: int, value: str = Form(...), db: Session = Depends(get
     old = p.is_retention_invoice
     p.is_retention_override = {"yes": True, "no": False}.get(value)
     audit(db, user.email, "payable.retention_flag", "payable", p.source_row_id, old=old, new=p.is_retention_invoice)
+    if old != p.is_retention_invoice:
+        waiver_service.reprocess_payable(db, p, user.email)
     db.commit()
     return RedirectResponse(f"/subs/{p.subcontract_id}" if p.subcontract_id else "/queues", status_code=303)
 
@@ -221,7 +227,9 @@ def queues(request: Request, db: Session = Depends(get_db), user: User = Depends
                                                                 Subcontract.deleted_in_source.is_(False))):
         subs_by_project.setdefault(sc.project.number, []).append(sc)
     projects = {p.number: p for p in db.scalars(select(Project).where(Project.is_tracked.is_(True)))}
-    return render(request, "queues.html", user, unmatched=unmatched, unmatched_cos=unmatched_cos, reviews=reviews,
+    pids = [r.ref_id for r in reviews if r.ref_type == "payable"]
+    payable_subs = {p.id: p.subcontract_id for p in db.scalars(select(Payable).where(Payable.id.in_(pids)))} if pids else {}
+    return render(request, "queues.html", user, payable_subs=payable_subs, unmatched=unmatched, unmatched_cos=unmatched_cos, reviews=reviews,
                   vendors=vendors, subs_by_project=subs_by_project, projects=projects, counts=queue_counts(db))
 
 

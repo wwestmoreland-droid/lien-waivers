@@ -17,6 +17,7 @@ def defaults() -> dict:
         "major_trade_threshold": s.major_trade_threshold,
         "default_reviewer_email": s.default_reviewer_email,
         "picker_statuses": [7, 8, 9],
+        "conditional_partial_enabled": False,
     }
 
 

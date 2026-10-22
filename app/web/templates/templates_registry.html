@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Waiver templates{% endblock %}
+{% block content %}
+<h1>Waiver templates</h1>
+<p class="sub">Registered in <code>templates/pdf/registry.yaml</code>. Field positions are tuned there; use Calibrate to see a test fill with a grid.</p>
+{% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
+
+<div class="panel">
+  <dl class="kv">
+    <dt>Statutory-form states</dt><dd>{{ reg.statutory_states|sort|join(', ') }}. Jobs in these states need their own counsel-reviewed form; the default forms are never used there.</dd>
+    <dt>Blocked waivers</dt><dd>{{ blocked }} waiting on a form{% if user.role in ('Admin', 'AP') %}
+      <form class="inline" method="post" action="/settings/templates/recheck"><button class="btn sm">Reload registry and recheck</button></form>{% endif %}</dd>
+  </dl>
+</div>
+
+<div class="table-wrap"><table>
+  <tr><th>Key</th><th>State</th><th>Type</th><th>File</th><th>Fields filled</th><th>Notary</th><th></th></tr>
+  {% for key, t in reg.templates.items() %}
+  <tr><td>{{ key }}</td><td>{{ t.state }}</td><td>{{ WaiverType(t.type).label }}</td><td class="small">{{ t.file.name }}</td>
+    <td class="small">{{ t.fields.keys()|join(', ') }}</td><td>{{ 'required' if t.notary_required else 'no' }}</td>
+    <td><a class="btn sm" href="/settings/templates/calibrate/{{ key }}" target="_blank">Calibrate</a></td></tr>
+  {% endfor %}
+</table></div>
+
+<div class="panel" style="margin-top:16px">
+  <h2 style="margin-top:0">Feature flags</h2>
+  <form method="post" action="/settings/flags" class="filters">
+    <label><input type="checkbox" name="conditional_partial" {{ 'checked' if cond_partial }} {{ 'disabled' if user.role != 'Admin' }}>
+      Conditional partial waivers before payment</label>
+    {% if user.role == 'Admin' %}<button class="btn">Save</button>{% endif %}
+    <span class="small muted">Off: an unconditional partial goes out when the invoice is paid. Needs a conditional partial template before it can be turned on.</span>
+  </form>
+</div>
+{% endblock %}

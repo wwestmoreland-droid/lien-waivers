@@ -99,3 +99,41 @@ def test_smartsheet_client_refuses_writes():
     t = _ReadOnlyTransport()
     with pytest.raises(PermissionError):
         t.handle_request(httpx.Request("PUT", "https://api.smartsheet.com/2.0/sheets/1/rows"))
+
+
+def test_waiver_pages_and_actions(client, db, source):
+    from app.db.models import Waiver
+    sync_runner.sync_now("test")
+    client.post(f"/projects/{PROJECT}/track")
+    source.row("ar_ap", 1003).values["paid_date"] = "2026-10-22"
+    sync_runner.sync_now("test")
+    w = db.scalar(select(Waiver))
+    assert w is not None
+
+    for path in ("/waivers", "/waivers?status=draft", f"/waivers/{w.id}", "/settings/templates", "/"):
+        assert client.get(path).status_code == 200, path
+    r = client.get(f"/waivers/{w.id}/pdf")
+    assert r.status_code == 200 and r.content[:4] == b"%PDF"
+    r = client.get("/settings/templates/calibrate/default/conditional_final")
+    assert r.status_code == 200 and r.content[:4] == b"%PDF"
+
+    client.post(f"/waivers/{w.id}/through-date", data={"value": "2026-10-15"})
+    client.post(f"/waivers/{w.id}/mark-sent")
+    client.post(f"/waivers/{w.id}/received", files={"file": ("signed.pdf", b"%PDF-1.4 x", "application/pdf")})
+    client.post(f"/waivers/{w.id}/accept")
+    db.expire_all()
+    w = db.get(Waiver, w.id)
+    assert w.status == "accepted" and w.pdf_version == 2
+    assert client.get(f"/waivers/{w.id}/signed").status_code == 200
+
+    # Sent waivers can't be edited.
+    r = client.post(f"/waivers/{w.id}/through-date", data={"value": "2026-10-01"}, follow_redirects=False)
+    assert "msg=" in r.headers["location"]
+
+    # Jobs page shows the waiver summary.
+    assert "Unconditional partial accepted" in client.get(f"/jobs/{PROJECT}").text
+
+
+def test_conditional_partial_flag_needs_template(client, db):
+    r = client.post("/settings/flags", data={"conditional_partial": "on"}, follow_redirects=False)
+    assert "Add%20a%20conditional%20partial%20template" in r.headers["location"]

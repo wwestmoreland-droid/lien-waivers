@@ -1,0 +1,327 @@
+"""Turn payable events into waivers, generate their PDFs, and record every status change."""
+from __future__ import annotations
+
+from datetime import date, datetime, timezone
+from functools import lru_cache
+from pathlib import Path
+
+import structlog
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.config import get_settings
+from app.ctc.engine import compute_for_subcontract
+from app.db.models import Payable, PayableEvent, Project, Subcontract, Waiver, WaiverEvent
+from app.matching.normalize import state_from_project_number
+from app.services.audit import audit
+from app.services.reviews import upsert_review
+from app.services.settings_store import get_setting
+from app.waivers import pdf
+from app.waivers.decision import Flags, PayableFacts, SubFacts, decide, waiver_amount
+from app.waivers.mapper import exceptions_for, field_values
+from app.waivers.registry import Registry, load_registry
+from app.waivers.types import OPEN_STATUSES, WaiverStatus, WaiverType
+
+log = structlog.get_logger()
+
+SYSTEM = "system:waivers"
+REVIEW_KINDS = ("no_contract", "over_billed", "retention_check", "hold")
+
+
+def now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+@lru_cache
+def registry() -> Registry:
+    return load_registry()
+
+
+def reload_registry() -> Registry:
+    registry.cache_clear()
+    return registry()
+
+
+def project_state(project: Project) -> str | None:
+    return (project.state or state_from_project_number(project.number) or "").upper() or None
+
+
+def flags(db: Session) -> Flags:
+    return Flags(conditional_partial_enabled=bool(get_setting(db, "conditional_partial_enabled")))
+
+
+def facts(p: Payable) -> PayableFacts:
+    return PayableFacts(match_status=p.match_status, approval_status=p.approval_status, is_paid=p.paid_date is not None,
+                        is_retention_invoice=p.is_retention_invoice, invoice_no=p.invoice_no)
+
+
+def log_event(db: Session, w: Waiver, actor: str, action: str, to_status: str | None = None,
+              note: str | None = None, **details) -> None:
+    db.add(WaiverEvent(waiver_id=w.id, actor=actor, action=action, from_status=w.status,
+                       to_status=to_status or w.status, note=note, details=details or None))
+    if to_status:
+        w.status = to_status
+
+
+# ---------------------------------------------------------------- event processing
+
+def process_events(db: Session, stats=None) -> None:
+    """Handle every unprocessed payable event on tracked projects. Safe to re-run."""
+    q = (select(PayableEvent, Payable).join(Payable, PayableEvent.payable_id == Payable.id)
+         .join(Project, Project.number == Payable.project_number)
+         .where(PayableEvent.processed_at.is_(None), Project.is_tracked.is_(True),
+                PayableEvent.kind.in_(("approved", "paid", "held")))
+         .order_by(PayableEvent.id))
+    for ev, p in db.execute(q).all():
+        if ev.from_backfill:
+            ev.processed_at = now()
+            ev.outcome = "history: no waiver created"
+            continue
+        handle_event(db, ev, p, stats)
+    db.flush()
+
+
+def handle_event(db: Session, ev: PayableEvent, p: Payable, stats=None) -> None:
+    if p.match_status == "direct_purchase":
+        ev.processed_at = now()
+        ev.outcome = "direct purchase: no waiver"
+        return
+    if p.match_status != "matched" or not p.subcontract_id:
+        return  # stays unprocessed until someone maps the row in the Unmatched queue
+    sc = db.get(Subcontract, p.subcontract_id)
+    ctc = compute_for_subcontract(sc, as_of=p)
+    kind = "approved" if ev.kind == "held" else ev.kind
+    d = decide(kind, facts(p), ctc, SubFacts(has_retention=sc.has_retention), flags(db))
+    if d.defer:
+        return
+    for r in d.reviews:
+        upsert_review(db, r.kind, "payable", p.id, p.project_number,
+                      f"{sc.vendor.name}, invoice {p.invoice_no or '-'}: {r.message}", True, stats)
+    outcome = d.note
+    if d.waiver:
+        w = create_waiver(db, p, sc, d.waiver, ev)
+        outcome = f"{d.waiver.value} #{w.id} ({w.status})"
+        if stats is not None:
+            stats[f"waivers_{d.waiver.value.lower()}"] += 1
+    ev.processed_at = now()
+    ev.outcome = outcome or "no waiver"
+
+
+def refresh_payable_reviews(db: Session) -> None:
+    """Close Hold / retention reviews whose payable has moved on."""
+    from app.db.models import ReviewItem
+
+    for item in db.scalars(select(ReviewItem).where(ReviewItem.ref_type == "payable", ReviewItem.status == "open",
+                                                    ReviewItem.kind.in_(("hold", "retention_check")))):
+        p = db.get(Payable, item.ref_id)
+        if p is None:
+            continue
+        still = (p.approval_status or "").lower() == "hold" if item.kind == "hold" else not p.is_retention_invoice
+        if not still:
+            upsert_review(db, item.kind, "payable", p.id, p.project_number, item.message, False)
+
+
+# ---------------------------------------------------------------- creating waivers
+
+def create_waiver(db: Session, p: Payable, sc: Subcontract, wtype: WaiverType, ev: PayableEvent | None,
+                  actor: str = SYSTEM) -> Waiver:
+    existing = db.scalar(select(Waiver).where(Waiver.payable_id == p.id, Waiver.type == wtype.value))
+    if existing:
+        return existing
+    state = project_state(sc.project)
+    w = Waiver(payable_id=p.id, subcontract_id=sc.id, type=wtype.value, state=state,
+               amount=waiver_amount(wtype, p.amount), through_date=p.through_date,
+               through_date_is_fallback=p.through_date_is_fallback,
+               exceptions_text=exceptions_for(sc, as_of=p) if wtype == WaiverType.CONDITIONAL_FINAL else None,
+               status=WaiverStatus.DRAFT.value, trigger_event_id=ev.id if ev else None,
+               reviewer_email=get_setting(db, "default_reviewer_email"))
+    db.add(w)
+    db.flush()
+    log_event(db, w, actor, "created", note=f"from {ev.kind} event" if ev else None)
+    if w.exceptions_text:
+        upsert_review(db, "final_exceptions", "waiver", w.id, sc.project.number,
+                      f"Conditional final for {sc.vendor.name} lists exceptions: {w.exceptions_text}. "
+                      "PM should confirm before it goes out.", True)
+    attach_template_and_render(db, w, actor)
+    return w
+
+
+def attach_template_and_render(db: Session, w: Waiver, actor: str) -> None:
+    t = registry().lookup(w.state, w.type)
+    if t is None:
+        reg = registry()
+        if reg.requires_statutory(w.state):
+            reason = f"Statutory form required for {w.state}; add template."
+            kind = "statutory_form_missing"
+        else:
+            reason = f"No template registered for {WaiverType(w.type).label}."
+            kind = "template_missing"
+        w.review_reason = reason
+        if w.status != WaiverStatus.NEEDS_REVIEW:
+            log_event(db, w, actor, "blocked", WaiverStatus.NEEDS_REVIEW.value, note=reason)
+        upsert_review(db, kind, "waiver", w.id, w.subcontract.project.number,
+                      f"{w.subcontract.vendor.name}, {WaiverType(w.type).label}: {reason}", True)
+        return
+    w.template_key = t.key
+    w.review_reason = None
+    render_pdf(db, w, actor)
+    if w.status == WaiverStatus.NEEDS_REVIEW:
+        log_event(db, w, actor, "unblocked", WaiverStatus.DRAFT.value, note=f"template {t.key}")
+    for kind in ("statutory_form_missing", "template_missing"):
+        upsert_review(db, kind, "waiver", w.id, None, "", False)
+
+
+def waiver_dir() -> Path:
+    d = get_settings().data_dir / "waivers"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def render_pdf(db: Session, w: Waiver, actor: str, today: date | None = None) -> Path:
+    t = registry().templates[w.template_key]
+    data = pdf.fill(t, field_values(w, today))
+    w.pdf_version += 1
+    folder = waiver_dir() / str(w.id)
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / f"{WaiverType(w.type).value.lower()}-v{w.pdf_version}.pdf"
+    path.write_bytes(data)
+    w.generated_pdf_path = str(path)
+    log_event(db, w, actor, "pdf_generated", version=w.pdf_version, template=t.key)
+    return path
+
+
+def recheck_blocked(db: Session, actor: str = SYSTEM) -> int:
+    """Retry waivers blocked on a missing template (after a template is added)."""
+    n = 0
+    for w in db.scalars(select(Waiver).where(Waiver.status == WaiverStatus.NEEDS_REVIEW.value)):
+        attach_template_and_render(db, w, actor)
+        n += w.status == WaiverStatus.DRAFT
+    return n
+
+
+# ---------------------------------------------------------------- edits and status changes
+
+EDITABLE = {WaiverStatus.NEEDS_REVIEW, WaiverStatus.DRAFT}
+
+
+def _require_editable(w: Waiver) -> None:
+    if w.status not in EDITABLE:
+        raise ValueError("This waiver has already gone out; void it and create a new one to change it.")
+
+
+def set_through_date(db: Session, w: Waiver, d: date, actor: str) -> None:
+    _require_editable(w)
+    old = w.through_date
+    w.through_date = d
+    w.through_date_is_fallback = False
+    w.payable.billed_through_date = d
+    log_event(db, w, actor, "through_date_changed", old=str(old), new=str(d))
+    audit(db, actor, "waiver.through_date", "waiver", w.id, old=str(old), new=str(d))
+    if w.template_key:
+        render_pdf(db, w, actor)
+
+
+def set_exceptions(db: Session, w: Waiver, text: str, actor: str) -> None:
+    _require_editable(w)
+    old = w.exceptions_text
+    w.exceptions_text = text.strip() or None
+    log_event(db, w, actor, "exceptions_changed", old=old, new=w.exceptions_text)
+    if w.template_key:
+        render_pdf(db, w, actor)
+
+
+def regenerate(db: Session, w: Waiver, actor: str) -> None:
+    _require_editable(w)
+    attach_template_and_render(db, w, actor)
+
+
+def mark_sent(db: Session, w: Waiver, actor: str) -> None:
+    """Phase 3 calls this when the email goes out. Exposed now for waivers sent by hand."""
+    if w.status not in (WaiverStatus.DRAFT, WaiverStatus.REJECTED):
+        raise ValueError("Only a ready waiver can be marked sent.")
+    w.sent_at = w.sent_at or now()
+    w.requested_at = w.requested_at or w.sent_at
+    log_event(db, w, actor, "sent", WaiverStatus.SENT.value)
+
+
+def mark_received(db: Session, w: Waiver, actor: str, filename: str, content: bytes) -> None:
+    if w.status in (WaiverStatus.VOID, WaiverStatus.ACCEPTED):
+        raise ValueError(f"Waiver is {w.status}.")
+    folder = waiver_dir() / str(w.id)
+    folder.mkdir(parents=True, exist_ok=True)
+    safe = "".join(ch for ch in Path(filename).name if ch.isalnum() or ch in "._- ") or "signed.pdf"
+    path = folder / f"signed-{now():%Y%m%d%H%M%S}-{safe}"
+    path.write_bytes(content)
+    w.signed_pdf_path = str(path)
+    w.received_at = now()
+    log_event(db, w, actor, "received", WaiverStatus.RECEIVED.value, file=path.name)
+
+
+def accept(db: Session, w: Waiver, actor: str, note: str = "") -> None:
+    if w.status != WaiverStatus.RECEIVED:
+        raise ValueError("Only a received waiver can be accepted.")
+    w.verified_at = now()
+    log_event(db, w, actor, "accepted", WaiverStatus.ACCEPTED.value, note=note or None)
+    audit(db, actor, "waiver.accepted", "waiver", w.id)
+
+
+def reject(db: Session, w: Waiver, actor: str, reason: str) -> None:
+    if w.status != WaiverStatus.RECEIVED:
+        raise ValueError("Only a received waiver can be rejected.")
+    log_event(db, w, actor, "rejected", WaiverStatus.REJECTED.value, note=reason)
+    audit(db, actor, "waiver.rejected", "waiver", w.id, reason=reason)
+
+
+def void(db: Session, w: Waiver, actor: str, reason: str) -> None:
+    if w.status == WaiverStatus.VOID:
+        return
+    log_event(db, w, actor, "voided", WaiverStatus.VOID.value, note=reason)
+    audit(db, actor, "waiver.voided", "waiver", w.id, reason=reason)
+    for kind in ("statutory_form_missing", "template_missing", "final_exceptions"):
+        upsert_review(db, kind, "waiver", w.id, None, "", False)
+
+
+# ---------------------------------------------------------------- reporting helpers
+
+def expected_waiver_types(db: Session, p: Payable) -> list[WaiverType]:
+    """What the rules say this payable should have had, given its current state. Used by backfill."""
+    if p.match_status != "matched" or not p.subcontract_id:
+        return []
+    sc = db.get(Subcontract, p.subcontract_id)
+    ctc = compute_for_subcontract(sc, as_of=p)
+    out = []
+    for kind in ("approved", "paid"):
+        if kind == "paid" and not p.paid_date:
+            continue
+        if kind == "approved" and (p.approval_status or "").lower() != "approved":
+            continue
+        d = decide(kind, facts(p), ctc, SubFacts(has_retention=sc.has_retention), flags(db))
+        if d.waiver:
+            out.append(d.waiver)
+    return out
+
+
+def sub_waiver_summary(db: Session) -> dict[int, dict]:
+    """Per subcontract: open waiver count and the status of the last waiver received."""
+    out: dict[int, dict] = {}
+    for w in db.scalars(select(Waiver).order_by(Waiver.id)):
+        s = out.setdefault(w.subcontract_id, {"open": 0, "last_received": ""})
+        if w.status in OPEN_STATUSES:
+            s["open"] += 1
+        if w.received_at:
+            s["last_received"] = f"{WaiverType(w.type).label} {w.status} {w.received_at:%b %-d, %Y}"
+    return out
+
+
+def reprocess_payable(db: Session, p: Payable, actor: str) -> None:
+    """Re-run the decision for a payable's events that didn't produce a waiver, e.g. after
+    someone marks it as the retention invoice or maps it to a subcontract."""
+    made = {w.trigger_event_id for w in db.scalars(select(Waiver).where(Waiver.payable_id == p.id))}
+    for ev in db.scalars(select(PayableEvent).where(PayableEvent.payable_id == p.id).order_by(PayableEvent.id)):
+        if ev.from_backfill or ev.id in made:
+            continue
+        ev.processed_at = None
+        ev.outcome = None
+        handle_event(db, ev, p)
+    refresh_payable_reviews(db)
+    audit(db, actor, "payable.reprocessed", "payable", p.source_row_id)
