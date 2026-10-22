@@ -71,8 +71,8 @@ CLI (`lw`):
 
 1. Push this repo to GitHub. In Railway: **New Project → Deploy from GitHub repo**. Railway builds from the `Dockerfile` (`railway.toml` sets the health check to `/health` and the service to one replica).
 2. **+ New → Database → PostgreSQL**. In the app service's Variables, add `DATABASE_URL` = `${{Postgres.DATABASE_URL}}`.
-3. App service → **Settings → Volumes → Add volume**, mount path `/data`. Generated and signed waiver PDFs are stored there; without the volume they'd be lost on every deploy.
-4. App service → **Settings → Networking → Generate domain** (or add a custom domain). Set `APP_BASE_URL` to that URL, e.g. `https://lienwaivers.up.railway.app`.
+3. **Add a volume for the PDFs.** On the project canvas (not inside the service), right-click empty space → **Volume**, or press ⌘K / Ctrl+K and type "volume". Attach it to the app service (not Postgres) with mount path `/data`, then click **Deploy**. Generated and signed waiver PDFs are stored there; without the volume they'd be lost on every deploy. No variable is needed: the Dockerfile already sets `DATA_DIR=/data`.
+4. App service → **Settings → Networking → Public Networking → Generate Domain**. When asked for the port, enter **8080**: Railway sets `PORT` (8080) and the start script listens on it. Set `APP_BASE_URL` to the generated URL with `https://` and no trailing slash, e.g. `https://lien-waivers-production.up.railway.app`. Check `https://<domain>/health` returns `{"status":"ok", ...}`.
 5. Variables: `SECRET_KEY`, `SMARTSHEET_TOKEN`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `TIMEZONE=America/Chicago`, and in later phases `ANTHROPIC_API_KEY` and `FERNET_KEY`. Do **not** set `DEV_AUTH_EMAIL` in production.
 6. Deploy. The container runs `lw migrate` and then starts the web server, and the scheduler runs inside it. Keep the service at one replica; a database lock also stops two syncs from running at once.
 
