@@ -9,3 +9,5 @@ data/
 .coverage
 ctc*.xlsx
 ctc*.csv
+build/
+dist/
