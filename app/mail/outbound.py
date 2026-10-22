@@ -317,3 +317,18 @@ def send_queued(db: Session) -> int:
         except ValueError:
             continue
     return n
+
+
+def ensure_request_drafts(db: Session) -> int:
+    """Draft request emails for ready waivers that don't have one yet (e.g. created before email
+    was set up). Runs after every sync; never resends anything."""
+    from app.db.models import Project, Subcontract
+
+    n = 0
+    for w in db.scalars(select(Waiver).join(Subcontract).join(Project).where(
+            Project.is_tracked.is_(True), Waiver.status == WaiverStatus.DRAFT.value)):
+        if not db.scalar(select(EmailMessage.id).where(EmailMessage.waiver_id == w.id,
+                                                       EmailMessage.kind == "waiver_request")):
+            queue_waiver_request(db, w)
+            n += 1
+    return n

@@ -260,3 +260,15 @@ def test_verify_compares_against_request(mail):
     att = request_email(db, w).attachments[0]
     result = verify.verify(w, att, client=FakeClient())
     assert result["status"] == "issues" and result["problems"] == ["the notary section is blank"]
+
+
+def test_waivers_from_before_email_get_request_drafts(mail):
+    db = mail.db
+    w = pay(mail)
+    e = request_email(db, w)
+    db.delete(e.attachments[0]); db.delete(e)
+    db.commit()
+    run_sync(db, mail.source, trigger="test")
+    assert request_email(db, w).status == "draft"
+    run_sync(db, mail.source, trigger="test")
+    assert len(db.scalars(select(EmailMessage).where(EmailMessage.kind == "waiver_request")).all()) == 1
