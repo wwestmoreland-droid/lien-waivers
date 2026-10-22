@@ -6,7 +6,7 @@ from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.auth import ROLES, current_user, require_role
@@ -15,6 +15,7 @@ from app.ctc.engine import compute_for_subcontract, order_key
 from app.db.models import (
     AuditLog,
     ChangeOrder,
+    Contact,
     CtcSnapshot,
     DirectPurchase,
     Payable,
@@ -64,6 +65,8 @@ def queue_counts(db: Session) -> dict[str, int]:
             ChangeOrder.project_number.in_(tracked))) or 0,
         "review": db.scalar(select(func.count(ReviewItem.id)).where(
             ReviewItem.status == "open", ReviewItem.project_number.in_(tracked))) or 0,
+        "new_contacts": db.scalar(select(func.count(Contact.id)).where(
+            or_(Contact.status == "new", Contact.needs_review.is_(True)), Contact.is_active.is_(True))) or 0,
         "verify": db.scalar(select(func.count(Waiver.id)).join(Subcontract).join(Project).where(
             Project.is_tracked.is_(True), Waiver.status == "received")) or 0,
     }
@@ -175,7 +178,12 @@ def sub_detail(request: Request, sc_id: int, db: Session = Depends(get_db), user
                        .order_by(CtcSnapshot.snapshot_date)).all()
     reviews = db.scalars(select(ReviewItem).where(ReviewItem.ref_type == "subcontract",
                                                   ReviewItem.ref_id == sc.id)).all()
+    from app.contacts import service as contacts
+    from app.contacts.signature import ROLE_NAMES
     return render(request, "sub_detail.html", user, sc=sc, ctc=ctc, timeline=timeline, events=events,
+                  waiver_to=contacts.waiver_email(sc), ROLE_NAMES=ROLE_NAMES,
+                  suggestion=contacts.billing_suggestion(db, sc),
+                  vendor_contacts=contacts.vendor_contacts(db, sc.vendor_id),
                   cos=sorted(sc.change_orders, key=lambda c: c.source_row_id),
                   snaps=snaps, reviews=reviews)
 
@@ -235,9 +243,16 @@ def queues(request: Request, db: Session = Depends(get_db), user: User = Depends
     unmatched_mail = db.scalars(select(EmailMessage).where(
         EmailMessage.direction == "in", EmailMessage.waiver_id.is_(None), EmailMessage.kind == "inbound")
         .order_by(EmailMessage.id.desc()).limit(100)).all()
+    new_contacts = []
+    if user.role in EDITORS:
+        new_contacts = db.scalars(select(Contact).where(
+            or_(Contact.status == "new", Contact.needs_review.is_(True)), Contact.is_active.is_(True))
+            .order_by(Contact.vendor_id.is_(None), Contact.last_seen_at.desc().nulls_last()).limit(200)).all()
     pids = [r.ref_id for r in reviews if r.ref_type == "payable"]
     payable_subs = {p.id: p.subcontract_id for p in db.scalars(select(Payable).where(Payable.id.in_(pids)))} if pids else {}
+    from app.contacts.signature import ROLE_NAMES
     return render(request, "queues.html", user, to_verify=to_verify, unmatched_mail=unmatched_mail,
+                  new_contacts=new_contacts, ROLE_NAMES=ROLE_NAMES,
                   payable_subs=payable_subs, unmatched=unmatched, unmatched_cos=unmatched_cos, reviews=reviews,
                   vendors=vendors, subs_by_project=subs_by_project, projects=projects, counts=queue_counts(db))
 

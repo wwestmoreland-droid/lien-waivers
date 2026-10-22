@@ -21,18 +21,21 @@ class FakeMailbox:
         self.thread_labels: dict[str, set[str]] = {}
         self.read: dict[str, bool] = {}
         self.broken = False
+        self.metadata_gets = 0
+        self.full_gets = 0
         self.revoked = False
 
     def deliver(self, *, from_addr: str, subject: str, body: str = "", thread_id: str | None = None,
                 in_reply_to: str | None = None, to: list[str] | None = None, from_name: str | None = None,
                 attachments: list[InAttachment] | None = None, headers: dict | None = None,
-                recipients_all: list[str] | None = None, label_ids: list[str] | None = None) -> Incoming:
+                recipients_all: list[str] | None = None, label_ids: list[str] | None = None,
+                cc: list[str] | None = None, date: datetime | None = None) -> Incoming:
         mid = f"m{next(_ids)}"
         msg = Incoming(
             message_id=mid, thread_id=thread_id or f"t{mid}", rfc_message_id=f"<{mid}@fake>",
             in_reply_to=in_reply_to, references=in_reply_to, from_addr=from_addr.lower(), from_name=from_name,
-            to=to or [self.email], cc=[], recipients_all=recipients_all or (to or [self.email]),
-            subject=subject, body_text=body, date=datetime.now(timezone.utc),
+            to=to or [self.email], cc=cc or [], recipients_all=recipients_all or (to or [self.email]) + (cc or []),
+            subject=subject, body_text=body, date=date or datetime.now(timezone.utc),
             label_ids=label_ids or ["INBOX", "UNREAD"], headers={k.lower(): v for k, v in (headers or {}).items()},
             attachments=attachments or [],
         )
@@ -77,6 +80,7 @@ class FakeMailProvider:
 
     def get_message(self, message_id: str) -> Incoming:
         self._check()
+        self.box.full_gets += 1
         return self.box.messages[message_id]
 
     def ensure_label(self, name: str) -> str:
@@ -96,6 +100,20 @@ class FakeMailProvider:
                                subject=m.subject, date=m.date, snippet=m.body_text[:120],
                                unread="UNREAD" in m.label_ids))
         return out
+
+    def get_metadata(self, message_id: str) -> Incoming:
+        from dataclasses import replace
+        self._check()
+        self.box.metadata_gets += 1
+        return replace(self.box.messages[message_id], body_text="", attachments=[])
+
+    def list_page(self, query: str, page_token: str | None, size: int = 100) -> tuple[list[str], str | None, int]:
+        self._check()
+        newest_first = list(reversed(self.box.order))
+        start = int(page_token or 0)
+        ids = newest_first[start:start + size]
+        nxt = str(start + size) if start + size < len(newest_first) else None
+        return ids, nxt, len(newest_first)
 
     def recent_ids(self, days: int, limit: int = 500) -> list[str]:
         self._check()

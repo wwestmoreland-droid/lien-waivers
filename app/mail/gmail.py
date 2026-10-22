@@ -171,6 +171,12 @@ class GmailProvider:
                 walk(p)
 
         walk(payload)
+        return self._incoming(data, body="\n".join(texts) if texts else _html_to_text("\n".join(htmls)),
+                              attachments=atts)
+
+    @staticmethod
+    def _incoming(data: dict, body: str, attachments: list[InAttachment]) -> Incoming:
+        headers = {h["name"].lower(): h["value"] for h in data.get("payload", {}).get("headers", [])}
         name, addr = email.utils.parseaddr(headers.get("from", ""))
         recipients = []
         for h in ("to", "cc", "delivered-to", "x-forwarded-to", "x-original-to", "envelope-to"):
@@ -185,9 +191,25 @@ class GmailProvider:
             in_reply_to=headers.get("in-reply-to"), references=headers.get("references"),
             from_addr=addr.lower(), from_name=name or None, to=_addresses(headers.get("to")),
             cc=_addresses(headers.get("cc")), recipients_all=recipients, subject=headers.get("subject", ""),
-            body_text="\n".join(texts) if texts else _html_to_text("\n".join(htmls)), date=date,
-            label_ids=data.get("labelIds", []), headers=headers, attachments=atts,
+            body_text=body, date=date, label_ids=data.get("labelIds", []), headers=headers, attachments=attachments,
         )
+
+    METADATA_HEADERS = ["From", "To", "Cc", "Reply-To", "Subject", "Date", "Delivered-To", "X-Forwarded-To",
+                        "X-Original-To", "List-Unsubscribe", "List-Id", "Precedence", "Auto-Submitted",
+                        "X-Autoreply", "X-Autorespond", "Content-Type", "Message-ID"]
+
+    def get_metadata(self, message_id: str) -> Incoming:
+        data = self._call("GET", f"/messages/{message_id}", params={
+            "format": "metadata", "metadataHeaders": self.METADATA_HEADERS})
+        return self._incoming(data, body="", attachments=[])
+
+    def list_page(self, query: str, page_token: str | None, size: int = 100) -> tuple[list[str], str | None, int]:
+        params = {"q": query, "maxResults": size}
+        if page_token:
+            params["pageToken"] = page_token
+        data = self._call("GET", "/messages", params=params)
+        return ([m["id"] for m in data.get("messages", [])], data.get("nextPageToken"),
+                int(data.get("resultSizeEstimate") or 0))
 
     def list_recent(self, query: str = "", limit: int = 50) -> list[Summary]:
         data = self._call("GET", "/messages", params={"q": query, "maxResults": limit})

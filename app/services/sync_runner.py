@@ -37,6 +37,21 @@ def mail_now() -> dict:
             return inbound.poll_all(db)
 
 
+def contacts_backfill_now() -> dict:
+    """One quota-sized slice of each running contact backfill (called every minute)."""
+    from sqlalchemy import select
+
+    from app.contacts import backfill
+    from app.db.models import ContactBackfill
+
+    with session_scope() as db:
+        if not db.scalar(select(ContactBackfill.id).where(ContactBackfill.status.in_(backfill.ACTIVE)).limit(1)):
+            return {}
+    with job_lock("contacts_backfill"):
+        with session_scope() as db:
+            return backfill.run_due(db)
+
+
 def reminders_now() -> dict:
     from app.mail import reminders
 

@@ -105,6 +105,14 @@ class MailProvider(Protocol):
 
     def list_recent(self, query: str = "", limit: int = 50) -> list[Summary]: ...
 
+    def get_metadata(self, message_id: str) -> Incoming:
+        """Headers only (cheap): body_text is empty and there are no attachments."""
+        ...
+
+    def list_page(self, query: str, page_token: str | None, size: int = 100) -> tuple[list[str], str | None, int]:
+        """One page of message ids matching a Gmail search, newest first: (ids, next token, estimate)."""
+        ...
+
     def recent_ids(self, days: int, limit: int = 500) -> list[str]:
         """Message ids from the last `days` days, oldest first (used to catch up after connecting)."""
         ...

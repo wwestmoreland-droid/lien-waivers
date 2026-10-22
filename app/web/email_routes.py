@@ -399,7 +399,11 @@ def mailboxes_page(request: Request, msg: str = "", db: Session = Depends(get_db
     boxes = mailboxes.mailboxes(db)
     listening_done = {m.id: not mailboxes.open_threads(db, m) for m in boxes if m.role == "listening"}
     projects = db.scalars(select(Project).where(Project.is_tracked.is_(True)).order_by(Project.number)).all()
+    from app.contacts import backfill
+    from app.db.models import ContactBackfill
+    backfills = {b.mailbox_id: b for b in db.scalars(select(ContactBackfill))}
     return render(request, "mailboxes.html", user, boxes=boxes, msg=msg, listening_done=listening_done,
+                  backfills=backfills, progress=backfill.progress,
                   projects=projects, has_send=mailboxes.has_send_scope)
 
 

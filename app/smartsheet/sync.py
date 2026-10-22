@@ -96,6 +96,8 @@ def run_sync(db: Session, source: SheetSource, trigger: str = "schedule",
         waivers.recheck_blocked(db)
         from app.mail import outbound
         stats["request_emails_drafted"] += outbound.ensure_request_drafts(db)
+        from app.contacts import service as contacts
+        stats["contacts_from_smartsheet"] = contacts.sync_from_subcontracts(db)
 
         for number in backfill & tracked.keys():
             tracked[number].backfilled_at = now()

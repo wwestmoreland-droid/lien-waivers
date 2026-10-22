@@ -3,7 +3,6 @@
 {% block content %}
 <h1>Queues</h1>
 <p class="sub">Rows the app couldn't place on its own. Nothing here is skipped; it waits until someone maps it.
-The New contacts queue comes in Phase 4.
 The retention check is cleared by marking the right invoice as the retention invoice on the sub's page.</p>
 {% set editor = user.role in ('Admin', 'AP') %}
 
@@ -22,6 +21,35 @@ The retention check is cleared by marking the right invoice as the retention inv
   <tr><td colspan="7" class="muted">Nothing to verify.</td></tr>
   {% endfor %}
 </table></div>
+
+{% if editor %}
+<h2 id="contacts">New contacts ({{ new_contacts|length }})</h2>
+<p class="small muted">People found in email who aren't confirmed yet, or whose details changed. Pick the vendor and role and Confirm, or Ignore. Addresses already in All Subcontracts are confirmed on their own.</p>
+<div class="table-wrap"><table>
+  <tr><th>Contact</th><th>Found in signature</th><th>Last seen</th><th>Vendor and role</th></tr>
+  {% for c in new_contacts %}
+  <tr>
+    <td><a href="/contacts/{{ c.id }}">{{ c.name or c.email }}</a><div class="small muted">{{ c.email }}</div>
+      {% if c.needs_review %}<span class="badge warn">changed</span>{% endif %}</td>
+    <td class="small">{{ c.title or '' }}{% if c.company %}<div class="muted">{{ c.company }}</div>{% endif %}
+      {% if c.phone %}<div>{{ c.phone }}</div>{% endif %}{% if c.mobile %}<div>m {{ c.mobile }}</div>{% endif %}
+      {% if c.needs_review and c.previous %}<div class="muted">was: {% for k, v in c.previous.items() %}{{ v }}{{ ', ' if not loop.last }}{% endfor %}</div>{% endif %}</td>
+    <td class="small">{{ c.last_seen_at|fdate }}<div class="muted">{{ c.message_count }} message{{ 's' if c.message_count != 1 }}</div></td>
+    <td><form class="inline" method="post" action="/contacts/{{ c.id }}">
+      <input type="hidden" name="back" value="/queues#contacts">
+      <select name="vendor_id"><option value="">No vendor</option>
+        {% for v in vendors %}<option value="{{ v.id }}" {{ 'selected' if c.vendor_id == v.id }}>{{ v.name }}</option>{% endfor %}</select>
+      <select name="role"><option value="">Role…</option>{% for k, v in ROLE_NAMES.items() %}<option value="{{ k }}" {{ 'selected' if c.role == k }}>{{ v }}</option>{% endfor %}</select>
+      <button class="btn sm primary" name="action" value="confirm">Confirm</button>
+      <button class="btn sm" name="action" value="ignore">Ignore</button>
+      {% if c.vendor_id and c.match_method in ('domain', 'name', 'thread') %}<div class="small muted">Vendor guessed from {{ {'domain': 'email domain', 'name': 'company name', 'thread': 'waiver thread'}[c.match_method] }}</div>{% endif %}
+    </form></td>
+  </tr>
+  {% else %}
+  <tr><td colspan="4" class="muted">No new contacts.</td></tr>
+  {% endfor %}
+</table></div>
+{% endif %}
 
 <h2 id="mail">Unmatched inbox ({{ unmatched_mail|length }})</h2>
 <p class="small muted">Waiver-related email the app couldn't tie to one waiver. Open it and link it.</p>

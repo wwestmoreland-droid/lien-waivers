@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.db.models import EmailAttachment, EmailEvent, EmailMessage, Mailbox, Waiver
+from app.db.models import Contact, EmailAttachment, EmailEvent, EmailMessage, Mailbox, Waiver
 from app.mail import mailboxes, templates
 from app.mail.provider import OutAttachment, Outgoing, TokenError
 from app.services.settings_store import get_setting
@@ -64,14 +64,25 @@ def _dedupe(addrs, exclude=()) -> list[str]:
     return out
 
 
+def waiver_email(sc) -> str | None:
+    from app.contacts.service import waiver_email as chosen
+    return chosen(sc)
+
+
 def recipients_for(w: Waiver) -> tuple[list[str], list[str]]:
     sc = w.subcontract
-    billing = sc.billing_email or sc.vendor.billing_email
-    to = _dedupe([billing])
+    to = _dedupe([waiver_email(sc)])
     cc = _dedupe([sc.pm_email, sc.estimator_email], exclude=to)
     if not to and cc:
         to, cc = cc[:1], cc[1:]
     return to, cc
+
+
+def _recipient_name(db: Session, sc) -> str | None:
+    if sc.vendor.waiver_email:
+        c = db.scalar(select(Contact).where(Contact.email == sc.vendor.waiver_email))
+        return c.name if c else None
+    return sc.billing_name
 
 
 def merge_values(db: Session, w: Waiver, mb: Mailbox | None) -> dict:
@@ -80,7 +91,7 @@ def merge_values(db: Session, w: Waiver, mb: Mailbox | None) -> dict:
     signature = (mb.signature or mb.display_name) if mb else ""
     return {
         "id": w.id,
-        "first_name": templates.first_name(sc.billing_name),
+        "first_name": templates.first_name(_recipient_name(db, sc)),
         "project_name": project.name or project.number,
         "amount": w.amount if w.amount is not None else p.amount,
         "invoice_no": p.invoice_no,
@@ -92,7 +103,7 @@ def merge_values(db: Session, w: Waiver, mb: Mailbox | None) -> dict:
         "waiver_type": WaiverType(w.type).label.lower() + " lien waiver",
         "requested_date": w.sent_at or w.requested_at,
         "billing_name": sc.billing_name,
-        "billing_email": sc.billing_email or sc.vendor.billing_email,
+        "billing_email": waiver_email(sc),
         "billing_phone": sc.billing_phone,
         "pm_first_name": templates.first_name(project.pm_name),
         # Payment gating is warn-only (decision 4), so emails never say payment is held.

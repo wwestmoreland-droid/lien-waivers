@@ -11,7 +11,7 @@ from app.config import get_settings
 from app.db.session import session_scope
 from app.services.locks import JobAlreadyRunning
 from app.services.settings_store import get_setting
-from app.services.sync_runner import mail_now, reminders_now, sync_now
+from app.services.sync_runner import contacts_backfill_now, mail_now, reminders_now, sync_now
 
 log = structlog.get_logger()
 
@@ -56,6 +56,8 @@ def start() -> None:
     # Reminders and escalations once a day on weekdays, so subs don't get them at odd hours.
     _scheduler.add_job(lambda: _guarded("reminders", reminders_now), CronTrigger(day_of_week="mon-fri", hour=8, minute=0),
                        id=REMINDER_JOB_ID, max_instances=1, coalesce=True, replace_existing=True)
+    _scheduler.add_job(lambda: _guarded("contacts_backfill", contacts_backfill_now), IntervalTrigger(minutes=1),
+                       id="contacts_backfill", max_instances=1, coalesce=True, replace_existing=True)
     _scheduler.start()
     log.info("scheduler.started", interval=current_interval_minutes())
 

@@ -19,6 +19,7 @@
     <a href="/waivers" class="{{ 'on' if path.startswith('/waivers') }}">Waivers</a>
     {% set ob = outbox_count() %}
     <a href="/email" class="{{ 'on' if path.startswith('/email') }}">Email{% if ob %} <span class="badge new">{{ ob }}</span>{% endif %}</a>
+    {% if user.role in ('Admin', 'AP') %}<a href="/contacts" class="{{ 'on' if path.startswith('/contacts') }}">Contacts</a>{% endif %}
     <a href="/queues" class="{{ 'on' if path.startswith('/queues') }}">Queues</a>
     <a href="/sync-runs" class="{{ 'on' if path.startswith('/sync-runs') }}">Sync log</a>
     <a href="/settings" class="{{ 'on' if path.startswith('/settings') }}">Settings</a>

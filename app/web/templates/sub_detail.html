@@ -30,6 +30,24 @@
     <dt>Retainage</dt><dd>{{ sc.retainage_pct ~ '%' if sc.retainage_pct else 'none' }}</dd>
     <dt>Smartsheet final waiver</dt><dd>{{ sc.final_waiver_status_source or '—' }}</dd>
   </dl>
+  {% set editor = user.role in ('Admin', 'AP') %}
+  <div style="margin-top:10px;padding-top:8px;border-top:1px solid #e4e7ec">
+    <strong>Waiver emails go to:</strong> {{ waiver_to or 'no address on file' }}
+    {% if sc.vendor.waiver_email %}<span class="small muted">(picked by {{ sc.vendor.waiver_email_set_by }}, for every job with {{ sc.vendor.name }})</span>
+      {% if editor %}<form class="inline" method="post" action="/vendors/{{ sc.vendor_id }}/waiver-email"><input type="hidden" name="back" value="/subs/{{ sc.id }}"><input type="hidden" name="email" value="">
+        <button class="btn sm">Go back to the Smartsheet billing email</button></form>{% endif %}
+    {% else %}<span class="small muted">(Billing Email in All Subcontracts)</span>{% endif %}
+    {% if suggestion %}
+    <div class="warnbox">Suggested update: <strong>{{ suggestion.name or suggestion.email }}</strong> ({{ suggestion.email }}{% if suggestion.title %}, {{ suggestion.title }}{% endif %}) is a confirmed billing contact, last emailed us {{ suggestion.last_seen_at|fdate }}.
+      {% if editor %}<form class="inline" method="post" action="/vendors/{{ sc.vendor_id }}/waiver-email"><input type="hidden" name="back" value="/subs/{{ sc.id }}"><input type="hidden" name="email" value="{{ suggestion.email }}">
+        <button class="btn sm primary">Send waivers to {{ suggestion.email }}</button></form>{% endif %}
+      <div class="small muted">This changes only where the app sends waiver emails. Smartsheet isn't changed.</div></div>
+    {% endif %}
+    {% if vendor_contacts %}
+    <div class="small" style="margin-top:6px">Other confirmed contacts:
+      {% for c in vendor_contacts if c.email != waiver_to %}{% if editor %}<a href="/contacts/{{ c.id }}">{% endif %}{{ c.name or c.email }}{% if editor %}</a>{% endif %} <span class="muted">{{ c.email }}{% if c.role %}, {{ ROLE_NAMES.get(c.role, c.role) }}{% endif %}</span>{{ ' · ' if not loop.last }}{% endfor %}</div>
+    {% endif %}
+  </div>
 </div>
 <div class="panel">
   <h2 style="margin-top:0">CTC trend</h2>

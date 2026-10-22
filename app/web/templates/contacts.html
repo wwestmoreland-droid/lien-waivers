@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Contacts{% endblock %}
+{% block content %}
+<h1>Contacts</h1>
+<p class="sub">Vendor contacts from All Subcontracts and from email in contracts@ and ap@. The app reads names from email headers and phone, title and company from signatures. It doesn't keep the email itself.
+New and changed contacts wait in the <a href="/queues#contacts">New contacts queue</a>.</p>
+
+{% for bf in backfills if bf.status not in ('done',) %}
+<div class="panel small">12-month backfill of <strong>{{ bf.mailbox.email }}</strong>: {{ bf.status }}{% if bf.overnight_only and bf.status in ('queued', 'running') %} (runs 8 PM to 6 AM){% endif %},
+  {{ progress(bf) }}% · {{ bf.scanned }} messages checked · {{ bf.contacts_new }} new contacts{% if bf.error %} · <span class="badge warn">{{ bf.error }}</span>{% endif %}
+  · <a href="/settings/mailboxes#backfill-{{ bf.mailbox_id }}">manage</a></div>
+{% endfor %}
+
+<div class="tabs">
+  <a href="/contacts" class="{{ 'on' if not status }}">All</a>
+  <a href="/contacts?status=review" class="{{ 'on' if status == 'review' }}">To review</a>
+  <a href="/contacts?status=confirmed" class="{{ 'on' if status == 'confirmed' }}">Confirmed</a>
+  <a href="/contacts?status=ignored" class="{{ 'on' if status == 'ignored' }}">Ignored</a>
+</div>
+
+<form class="filters" method="get">
+  <input type="hidden" name="status" value="{{ status }}">
+  <input type="search" name="q" value="{{ q }}" placeholder="Name, email, company">
+  <select name="role"><option value="">All roles</option>{% for k, v in ROLE_NAMES.items() %}<option value="{{ k }}" {{ 'selected' if role == k }}>{{ v }}</option>{% endfor %}</select>
+  <select name="vendor"><option value="">All vendors</option><option value="none" {{ 'selected' if vendor == 'none' }}>Unassigned</option>
+    {% for v in vendors %}<option value="{{ v.id }}" {{ 'selected' if vendor == v.id|string }}>{{ v.name }}</option>{% endfor %}</select>
+  <button class="btn">Filter</button>
+  <a class="btn" href="/contacts.csv?q={{ q|urlencode }}&role={{ role }}&vendor={{ vendor }}&status={{ status }}">Export CSV</a>
+</form>
+
+<div class="table-wrap"><table>
+  <tr><th>Vendor</th><th>Name</th><th>Email</th><th>Role</th><th>Title / company</th><th>Phone</th><th>Last seen</th><th class="n">Messages</th><th></th></tr>
+  {% for c in rows %}
+  <tr>
+    <td>{{ c.vendor.name if c.vendor else '' }}{% if not c.vendor %}<span class="badge warn">Unassigned</span>{% endif %}</td>
+    <td><a href="/contacts/{{ c.id }}">{{ c.name or '(no name)' }}</a></td>
+    <td class="small">{{ c.email }}</td>
+    <td class="small">{{ ROLE_NAMES.get(c.role or '', '') }}</td>
+    <td class="small">{{ c.title or '' }}{% if c.title and c.company %}<br>{% endif %}<span class="muted">{{ c.company or '' }}</span></td>
+    <td class="small" style="white-space:nowrap">{{ c.phone or '' }}{% if c.mobile %}<br>m {{ c.mobile }}{% endif %}</td>
+    <td class="small">{{ c.last_seen_at|fdate }}</td>
+    <td class="n">{{ c.message_count or '' }}</td>
+    <td class="small">{% if c.status == 'new' %}<span class="badge new">new</span>{% elif c.needs_review %}<span class="badge warn">changed</span>
+      {% elif c.status == 'ignored' %}<span class="badge">ignored</span>{% endif %}
+      {% if c.source == 'smartsheet' %}<span class="badge">Smartsheet</span>{% endif %}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="9" class="muted">No contacts yet. They're added as mail comes in, and from All Subcontracts on each sync. To pull in the last 12 months, start a backfill on <a href="/settings/mailboxes">Mailboxes</a>.</td></tr>
+  {% endfor %}
+</table></div>
+{% if rows|length == 1000 %}<p class="small muted">Showing the first 1,000. Search or filter to narrow it down, or export the CSV for all of them.</p>{% endif %}
+{% endblock %}

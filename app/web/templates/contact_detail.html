@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}{{ c.name or c.email }}{% endblock %}
+{% block content %}
+<p class="small"><a href="/contacts">← Contacts</a></p>
+<h1>{{ c.name or c.email }}</h1>
+<p class="sub">{{ c.email }} · from {{ 'All Subcontracts' if c.source == 'smartsheet' else 'email' }}
+  · first seen {{ c.first_seen_at|fdate }}{% if c.last_seen_at %} · last seen {{ c.last_seen_at|fdate }}{% endif %}
+  {% if c.status == 'new' %}<span class="badge new">new</span>{% elif c.status == 'ignored' %}<span class="badge">ignored</span>{% else %}<span class="badge ok">confirmed</span>{% endif %}
+  {% if c.match_method %}<span class="small muted">· vendor found by {{ {'exact': 'known email', 'thread': 'waiver thread', 'domain': 'company domain', 'name': 'company name', 'manual': 'a person'}.get(c.match_method, c.match_method) }}</span>{% endif %}
+  {% if c.parsed_by == 'ai' %}<span class="small muted">· signature read by Claude</span>{% endif %}</p>
+
+{% if c.needs_review and c.previous %}
+<div class="warnbox">Details changed in a newer email. Before: {% for k, v in c.previous.items() %}{{ k }} "{{ v }}"{{ ', ' if not loop.last }}{% endfor %}. Confirm to keep the new values.</div>
+{% endif %}
+
+<form method="post" action="/contacts/{{ c.id }}" class="panel">
+  <div class="grid2">
+    <div>
+      <label class="small muted">Vendor</label><br>
+      <select name="vendor_id" style="width:100%"><option value="">Unassigned</option>
+        {% for v in vendors %}<option value="{{ v.id }}" {{ 'selected' if c.vendor_id == v.id }}>{{ v.name }}</option>{% endfor %}</select><br>
+      <label class="small muted">Role</label><br>
+      <select name="role" style="width:100%"><option value="">Not set</option>
+        {% for k, v in ROLE_NAMES.items() %}<option value="{{ k }}" {{ 'selected' if c.role == k }}>{{ v }}</option>{% endfor %}</select><br>
+      <label class="small muted">Name</label><br><input name="name" value="{{ c.name or '' }}" style="width:100%">
+    </div>
+    <div>
+      <label class="small muted">Title</label><br><input name="title" value="{{ c.title or '' }}" style="width:100%"><br>
+      <label class="small muted">Company</label><br><input name="company" value="{{ c.company or '' }}" style="width:100%"><br>
+      <label class="small muted">Phone</label><br><input name="phone" value="{{ c.phone or '' }}" style="width:100%"><br>
+      <label class="small muted">Mobile</label><br><input name="mobile" value="{{ c.mobile or '' }}" style="width:100%">
+    </div>
+  </div>
+  <div class="row-actions" style="margin-top:10px">
+    {% if c.status != 'confirmed' or c.needs_review %}<button class="btn primary" name="action" value="confirm">Confirm</button>{% endif %}
+    <button class="btn" name="action" value="save">Save</button>
+    {% if c.status != 'ignored' %}<button class="btn" name="action" value="ignore">Ignore</button>{% endif %}
+  </div>
+</form>
+
+<h2>Messages ({{ c.message_count or 0 }})</h2>
+<div class="table-wrap"><table>
+  <tr><th>Date</th><th>Subject</th><th>As</th><th>Mailbox</th><th></th></tr>
+  {% for m in messages %}
+  <tr><td class="small">{{ m.sent_at|fdate }}</td><td>{{ m.subject or '(no subject)' }}</td><td class="small">{{ m.field }}</td>
+    <td class="small">{{ m.mailbox.label if m.mailbox.role == 'readonly' else m.mailbox.email }}</td>
+    <td class="small"><a target="_blank" rel="noopener" href="https://mail.google.com/mail/?authuser={{ m.mailbox.email|urlencode }}#all/{{ m.provider_thread_id or m.provider_message_id }}">Open in Gmail</a></td></tr>
+  {% else %}
+  <tr><td colspan="5" class="muted">{{ 'Listed in All Subcontracts; not seen in email yet.' if c.source == 'smartsheet' else 'No messages.' }}</td></tr>
+  {% endfor %}
+</table></div>
+{% endblock %}

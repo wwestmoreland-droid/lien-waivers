@@ -35,6 +35,7 @@
   <a class="card {{ 'alert' if counts.unmatched_ap }}" href="/queues#ap"><div class="k">Unmatched AP rows</div><div class="v">{{ counts.unmatched_ap }}</div></a>
   <a class="card {{ 'alert' if counts.unmatched_co }}" href="/queues#co"><div class="k">Unmatched change orders</div><div class="v">{{ counts.unmatched_co }}</div></a>
   <a class="card {{ 'alert' if counts.review }}" href="/queues#review"><div class="k">Review queue</div><div class="v">{{ counts.review }}</div></a>
+  {% if user.role in ('Admin', 'AP') %}<a class="card" href="/queues#contacts"><div class="k">New contacts</div><div class="v">{{ counts.new_contacts }}</div></a>{% endif %}
   <div class="card {{ 'alert' if status_counts.get('over_billed') }}"><div class="k">Over-billed subs</div><div class="v">{{ status_counts.get('over_billed', 0) }}</div></div>
   <div class="card"><div class="k">Subs at 100%</div><div class="v">{{ status_counts.get('complete', 0) }}</div></div>
 </div>

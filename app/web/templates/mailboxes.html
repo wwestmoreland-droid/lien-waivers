@@ -32,6 +32,29 @@ A <strong>read-only source</strong> is only read (for contact logging and waiver
   {% if mb.role == 'listening' %}<div class="warnbox">This was the Sender. It keeps reading replies on threads it started.
     {% if listening_done.get(mb.id) %}All its threads are closed, so you can disconnect it.{% endif %}</div>{% endif %}
 
+  {% set bf = backfills.get(mb.id) %}
+  <div id="backfill-{{ mb.id }}" class="small" style="margin-top:10px;padding-top:8px;border-top:1px solid #e4e7ec">
+    <strong>Contact backfill (last 12 months):</strong>
+    {% if not bf %}not started. It reads headers first and only opens a message for a new sender's signature, staying under Gmail's limits.
+    {% else %}{{ bf.status }}{% if bf.overnight_only and bf.status in ('queued', 'running') %}, runs 8 PM to 6 AM{% endif %}
+      · {{ progress(bf) }}% · {{ bf.scanned }} messages checked · {{ bf.bodies_fetched }} opened for signatures · {{ bf.contacts_new }} new contacts
+      {% if bf.finished_at %}· finished {{ bf.finished_at|fdate }}{% endif %}
+      {% if bf.error %}<div class="warnbox">{{ bf.error }}</div>{% endif %}{% endif %}
+    {% if user.role in ('Admin', 'AP') and mb.status == 'connected' %}
+    <form class="inline" method="post" action="/settings/mailboxes/{{ mb.id }}/contacts-backfill">
+      {% if not bf or bf.status == 'done' %}
+        <button class="btn sm" name="action" value="start_tonight">{{ 'Run again' if bf else 'Start' }} tonight</button>
+        <button class="btn sm" name="action" value="start_now">{{ 'Run again' if bf else 'Start' }} now</button>
+      {% elif bf.status in ('queued', 'running') %}
+        {% if bf.overnight_only %}<button class="btn sm" name="action" value="run_now">Run now instead</button>{% else %}<button class="btn sm" name="action" value="overnight">Only overnight</button>{% endif %}
+        <button class="btn sm" name="action" value="pause">Pause</button>
+      {% else %}
+        <button class="btn sm" name="action" value="resume">Resume</button>
+      {% endif %}
+    </form>
+    {% endif %}
+  </div>
+
   {% if admin %}
   <form method="post" action="/settings/mailboxes/{{ mb.id }}" style="margin-top:10px">
     <div class="grid2">

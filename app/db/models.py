@@ -20,6 +20,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    true,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -111,6 +112,9 @@ class Vendor(Base):
     address: Mapped[str | None] = mapped_column(String(500))
     last_bounce_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_bounce_address: Mapped[str | None] = mapped_column(String(255))
+    # Chosen on the sub page from a confirmed contact; used instead of the Smartsheet billing email.
+    waiver_email: Mapped[str | None] = mapped_column(String(255))
+    waiver_email_set_by: Mapped[str | None] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     aliases: Mapped[list[VendorAlias]] = relationship(back_populates="vendor")
@@ -548,3 +552,82 @@ class EmailUserState(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     handled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class Contact(Base):
+    """A vendor contact, from All Subcontracts or harvested from email headers and signatures.
+    The email body itself is never stored here; only the contact fields and links to messages."""
+
+    __tablename__ = "contacts"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email: Mapped[str] = mapped_column(String(255), unique=True)
+    vendor_id: Mapped[int | None] = mapped_column(ForeignKey("vendors.id"))
+    name: Mapped[str | None] = mapped_column(String(255))
+    phone: Mapped[str | None] = mapped_column(String(100))
+    mobile: Mapped[str | None] = mapped_column(String(100))
+    title: Mapped[str | None] = mapped_column(String(255))
+    company: Mapped[str | None] = mapped_column(String(255))
+    role: Mapped[str | None] = mapped_column(String(20))  # billing / pm / estimator / foreman / owner / other
+    source: Mapped[str] = mapped_column(String(20), default="email")  # smartsheet / email
+    # new / confirmed / ignored. A confirmed contact whose details changed gets needs_review.
+    status: Mapped[str] = mapped_column(String(20), default="new")
+    needs_review: Mapped[bool] = mapped_column(Boolean, default=False)
+    previous: Mapped[dict | None] = mapped_column(JSON)  # values before the last change, for the queue
+    match_method: Mapped[str | None] = mapped_column(String(30))  # exact / thread / domain / name / manual
+    confidence: Mapped[int | None] = mapped_column(Integer)
+    signature_hash: Mapped[str | None] = mapped_column(String(64))
+    parsed_by: Mapped[str | None] = mapped_column(String(10))  # rules / ai
+    # Messages opened looking for a signature that wasn't found yet (short replies have none).
+    signature_checks: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    message_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    source_message_id: Mapped[str | None] = mapped_column(String(100))
+    source_mailbox_id: Mapped[int | None] = mapped_column(ForeignKey("mailboxes.id"))
+    confirmed_by: Mapped[str | None] = mapped_column(String(255))
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
+
+    vendor: Mapped[Vendor | None] = relationship()
+
+
+class ContactMessage(Base):
+    """A message a contact appears in (headers only; the body isn't kept)."""
+
+    __tablename__ = "contact_messages"
+    __table_args__ = (UniqueConstraint("contact_id", "mailbox_id", "provider_message_id"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    contact_id: Mapped[int] = mapped_column(ForeignKey("contacts.id"), index=True)
+    mailbox_id: Mapped[int] = mapped_column(ForeignKey("mailboxes.id"))
+    provider_message_id: Mapped[str] = mapped_column(String(100))
+    provider_thread_id: Mapped[str | None] = mapped_column(String(100))
+    field: Mapped[str] = mapped_column(String(10))  # from / reply-to / to / cc
+    subject: Mapped[str | None] = mapped_column(String(1000))
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    mailbox: Mapped[Mailbox] = relationship()
+
+
+class ContactBackfill(Base):
+    """Progress of the one-time 12-month contact backfill for a mailbox, so it can resume."""
+
+    __tablename__ = "contact_backfills"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    mailbox_id: Mapped[int] = mapped_column(ForeignKey("mailboxes.id"), unique=True)
+    # queued / running / paused / done / error
+    status: Mapped[str] = mapped_column(String(20), default="queued")
+    overnight_only: Mapped[bool] = mapped_column(Boolean, default=True)
+    since: Mapped[date] = mapped_column(Date)
+    page_token: Mapped[str | None] = mapped_column(String(200))
+    estimate: Mapped[int | None] = mapped_column(Integer)
+    scanned: Mapped[int] = mapped_column(Integer, default=0)
+    skipped: Mapped[int] = mapped_column(Integer, default=0)
+    bodies_fetched: Mapped[int] = mapped_column(Integer, default=0)
+    contacts_new: Mapped[int] = mapped_column(Integer, default=0)
+    requested_by: Mapped[str | None] = mapped_column(String(255))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error: Mapped[str | None] = mapped_column(Text)
+
+    mailbox: Mapped[Mailbox] = relationship()

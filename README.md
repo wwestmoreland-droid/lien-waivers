@@ -2,14 +2,15 @@
 
 This app replaces the Zapier + Smartsheet lien waiver automation. It keeps its own database as the source of record. Smartsheet is input only, and **the app never writes to Smartsheet**: the client only issues GET requests and refuses any other verb.
 
-## Status: Phases 1–3 of 5
+## Status: Phases 1–4a of 5
 
 | Phase | Scope | State |
 |---|---|---|
 | 1 | Smartsheet sync, Projects picker, data model, vendor matching + Unmatched queue, CTC engine + report, read-only dashboard, Google sign-in, Railway deploy files | **Done** |
 | 2 | Waiver decision engine, template registry, PDF filling + `calibrate`, Waivers page | **Done** |
 | 3 | Mailboxes (Google sign-in per mailbox), Email center, outbound requests, inbound matching, verification, reminders | **Done** |
-| 4 | Contact logging (contracts@, ap@ via wwestmoreland@), supplier disclosure for major trades | Next |
+| 4a | Contact logging (contracts@, ap@ via wwestmoreland@), New contacts queue, Contacts page, billing-email suggestions, 12-month backfill | **Done** |
+| 4b | Supplier disclosure for major trades | Next |
 | 5 | Payment status view (warn only), auto-send switches, deployment runbook | |
 
 ## How it works (Phase 1)
@@ -61,6 +62,14 @@ The CTC engine was run on real Smartsheet rows for P--IL-102125-1 (IMAGE Studios
 - **Verification.** When `ANTHROPIC_API_KEY` is set, Claude (`claude-opus-5-5`, with the server-side refusal fallback on) reads the returned PDF or image and reports what it found: signed, notarized, form type, amount, through date, project. The app compares that with the request. The result appears in Queues → Verification and on the waiver page as a guide. A person always clicks Accept, or Reject, which drafts the "please correct" reply in the same thread.
 - **Reminders** run at 8:00 AM Central on weekdays only (anything due on a weekend goes out Monday). By default: day 7 (waiver attached again) and day 10 go to the sub in the same thread, and day 13 is an internal escalation to the job's PM and estimator from INTAKE. Checks are mailed, so subs get a week before the first nudge. The days can be changed on Settings → Email. All go to the Outbox unless set to auto-send. **Daily digest**: `/digest`.
 - **Email center** (`/email`): Inbox, Outbox, Sent; filters, search, read/handled per user; reply, reply all and forward with a template picker; **see all contracts@ mail** reads the whole mailbox live from Gmail, and any message can be brought in and linked.
+
+### Contacts (Phase 4a)
+- Every new message in a connected mailbox is checked for contacts: names from From, Reply-To, To and Cc; phone, mobile, title and company from the sender's signature (rules first; Claude only when the rules can't read a new or changed signature). The email body isn't kept for contacts.
+- Skipped: @buildoutpros.com, no-reply and notification addresses, bulk mail (List-Unsubscribe), calendar invites, auto-replies and bounces. For a read-only source with "only mail addressed to" set, only that mail is read.
+- Vendor match order: address already on file (auto-confirmed), the waiver thread, the company's email domain (never gmail.com and the like), the company name, else Unassigned. Everything else waits in **Queues → New contacts**.
+- Contacts in All Subcontracts are added as confirmed on each sync.
+- On a sub's page, a confirmed billing contact that differs from where waivers go shows as a suggested update; one click switches waiver emails to it (Smartsheet isn't changed).
+- **Backfill**: Settings → Mailboxes → "Start tonight" reads the last 12 months, headers first, a slice per minute under Gmail's quota, 8 PM to 6 AM by default. It saves progress and resumes after a restart.
 
 ### Gmail setup (one time, in the same Google Cloud project as sign-in)
 

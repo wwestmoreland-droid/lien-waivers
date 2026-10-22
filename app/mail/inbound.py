@@ -135,11 +135,24 @@ def poll(db: Session, mb: Mailbox) -> tuple[int, int]:
                                                    EmailMessage.provider_message_id == mid)):
             continue
         msg = provider.get_message(mid)
+        _log_contacts(db, mb, msg)
         if process(db, mb, msg, provider):
             kept += 1
     mb.history_id = cursor
     mb.last_polled_at = now()
     return len(ids), kept
+
+
+def _log_contacts(db: Session, mb: Mailbox, msg: Incoming) -> None:
+    """Contact logging (section 6B) never gets in the way of handling the mail itself."""
+    from app.contacts import ai
+    from app.contacts.harvest import harvest
+
+    try:
+        with db.begin_nested():
+            harvest(db, mb, msg, budget=ai.AiBudget(3))
+    except Exception:
+        log.exception("contacts.harvest_failed", mailbox=mb.email, message=msg.message_id)
 
 
 def _known_thread(db: Session, mb: Mailbox, thread_id: str) -> EmailMessage | None:
@@ -319,6 +332,8 @@ def _handle_bounce(db: Session, mb: Mailbox, msg: Incoming, e: EmailMessage) -> 
         others = set()
         for sc in db.scalars(select(Subcontract).where(Subcontract.vendor_id == v.id)):
             others |= {x for x in (sc.billing_email, sc.pm_email, sc.estimator_email, sc.foreman_email) if x}
+        from app.contacts.service import vendor_contacts
+        others |= {c.email for c in vendor_contacts(db, v.id)}
         others -= {a.lower() for a in (original.to_addrs or [])}
         suggestion = f" Other addresses on file: {', '.join(sorted(others))}." if others else ""
         upsert_review(db, "email_bounced", "email", original.id, original.project_number,
