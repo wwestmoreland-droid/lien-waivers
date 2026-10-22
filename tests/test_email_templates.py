@@ -50,6 +50,7 @@ def test_if_lines():
     assert "We listed these open items as exceptions: Pending CO: Reroute line ($4,500.00)." in r.body
     r = render_text(file_text("conditional_final"), VALUES)
     assert "exceptions" not in r.body
+    assert "We'll release payment as soon as we have everything." in r.body
 
 
 def test_received_without_name():

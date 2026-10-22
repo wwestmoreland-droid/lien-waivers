@@ -1,4 +1,6 @@
-"""Daily reminders (8:00 AM Central): day 3 and day 7 to the sub, day 10 escalation to our PM.
+"""Daily reminders (8:00 AM Central, weekdays only): day 3 and day 7 to the sub, day 10
+escalation to our PM. Days are calendar days from the request; anything that comes due on a
+weekend goes out Monday morning.
 
 Days count from when the request went out. Reminders are replies in the request's thread
 with the waiver attached again. Like every other email, they wait in the Outbox unless
@@ -36,6 +38,8 @@ def _pending(db: Session, w: Waiver, kind: str) -> bool:
 def run(db: Session, today: date | None = None) -> dict:
     today = today or datetime.now(ZoneInfo(get_settings().timezone)).date()
     stats = {"reminder_1": 0, "reminder_2": 0, "escalation": 0}
+    if today.weekday() >= 5:  # Saturday or Sunday
+        return stats
     waivers = db.scalars(select(Waiver).join(Subcontract).join(Project).where(
         Project.is_tracked.is_(True), Waiver.status == WaiverStatus.SENT.value, Waiver.sent_at.is_not(None)))
     for w in waivers:

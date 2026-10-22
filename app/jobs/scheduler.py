@@ -53,8 +53,8 @@ def start() -> None:
                        max_instances=1, coalesce=True, replace_existing=True)
     _scheduler.add_job(lambda: _guarded("mail", mail_now), IntervalTrigger(minutes=current_interval_minutes()),
                        id=MAIL_JOB_ID, max_instances=1, coalesce=True, replace_existing=True)
-    # Reminders and escalations once a day, so subs don't get them at odd hours.
-    _scheduler.add_job(lambda: _guarded("reminders", reminders_now), CronTrigger(hour=8, minute=0),
+    # Reminders and escalations once a day on weekdays, so subs don't get them at odd hours.
+    _scheduler.add_job(lambda: _guarded("reminders", reminders_now), CronTrigger(day_of_week="mon-fri", hour=8, minute=0),
                        id=REMINDER_JOB_ID, max_instances=1, coalesce=True, replace_existing=True)
     _scheduler.start()
     log.info("scheduler.started", interval=current_interval_minutes())

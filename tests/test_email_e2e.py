@@ -188,16 +188,16 @@ def test_reminders_and_escalation(mail):
     w.sent_at = sent
     db.commit()
     assert reminders.run(db, date(2026, 10, 3)) == {"reminder_1": 0, "reminder_2": 0, "escalation": 0}
-    reminders.run(db, date(2026, 10, 4))
+    reminders.run(db, date(2026, 10, 5))
     r1 = db.scalar(select(EmailMessage).where(EmailMessage.kind == "reminder_1"))
     assert r1.provider_thread_id == e.provider_thread_id and r1.attachments and "attached again" in r1.body_text
-    reminders.run(db, date(2026, 10, 4))
+    reminders.run(db, date(2026, 10, 5))
     assert len(db.scalars(select(EmailMessage).where(EmailMessage.kind == "reminder_1")).all()) == 1
     outbound.send(db, r1, "ap")
     reminders.run(db, date(2026, 10, 8))
     r2 = db.scalar(select(EmailMessage).where(EmailMessage.kind == "reminder_2"))
     assert "We still don't have the signed lien waiver" in r2.body_text and "on hold" not in r2.body_text
-    reminders.run(db, date(2026, 10, 11))
+    reminders.run(db, date(2026, 10, 12))
     esc = db.scalar(select(EmailMessage).where(EmailMessage.kind == "escalation"))
     assert esc.to_addrs == ["pmanager@buildoutpros.com"] and esc.body_text.startswith("Pat,")
     assert "Their billing contact is Dana AP, ap@deltafire.com." in esc.body_text  # empty phone left out
@@ -272,3 +272,12 @@ def test_waivers_from_before_email_get_request_drafts(mail):
     assert request_email(db, w).status == "draft"
     run_sync(db, mail.source, trigger="test")
     assert len(db.scalars(select(EmailMessage).where(EmailMessage.kind == "waiver_request")).all()) == 1
+
+
+def test_no_reminders_on_weekends(mail):
+    db = mail.db
+    w, e = send_request(mail)
+    w.sent_at = datetime(2026, 10, 1, 15, tzinfo=timezone.utc)  # Thursday
+    db.commit()
+    assert reminders.run(db, date(2026, 10, 4)) == {"reminder_1": 0, "reminder_2": 0, "escalation": 0}  # Sunday
+    assert reminders.run(db, date(2026, 10, 5))["reminder_1"] == 1  # Monday picks it up
