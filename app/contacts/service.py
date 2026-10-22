@@ -85,8 +85,9 @@ def waiver_email(sc: Subcontract) -> str | None:
     return sc.vendor.waiver_email or sc.billing_email or sc.vendor.billing_email
 
 
-def vendor_contacts(db: Session, vendor_id: int) -> list[Contact]:
-    return list(db.scalars(select(Contact).where(Contact.vendor_id == vendor_id, Contact.status == "confirmed",
+def vendor_contacts(db: Session, vendor_id: int, include_new: bool = False) -> list[Contact]:
+    statuses = ("confirmed", "new") if include_new else ("confirmed",)
+    return list(db.scalars(select(Contact).where(Contact.vendor_id == vendor_id, Contact.status.in_(statuses),
                                                  Contact.is_active.is_(True))
                            .order_by(Contact.role != "billing", Contact.last_seen_at.desc().nulls_last())))
 

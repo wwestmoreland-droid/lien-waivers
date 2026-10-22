@@ -161,7 +161,8 @@ def job_detail(request: Request, number: str, db: Session = Depends(get_db), use
 
 
 @router.get("/subs/{sc_id}", response_class=HTMLResponse)
-def sub_detail(request: Request, sc_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+def sub_detail(request: Request, sc_id: int, found: str = "", msg: str = "", db: Session = Depends(get_db),
+               user: User = Depends(current_user)):
     sc = db.scalar(select(Subcontract).where(Subcontract.id == sc_id).options(
         selectinload(Subcontract.payables), selectinload(Subcontract.change_orders)))
     if not sc:
@@ -183,7 +184,10 @@ def sub_detail(request: Request, sc_id: int, db: Session = Depends(get_db), user
     return render(request, "sub_detail.html", user, sc=sc, ctc=ctc, timeline=timeline, events=events,
                   waiver_to=contacts.waiver_email(sc), ROLE_NAMES=ROLE_NAMES,
                   suggestion=contacts.billing_suggestion(db, sc),
-                  vendor_contacts=contacts.vendor_contacts(db, sc.vendor_id),
+                  vendor_contacts=contacts.vendor_contacts(db, sc.vendor_id, include_new=True),
+                  found_elsewhere=[c for c in (db.get(Contact, int(i)) for i in found.split(",") if i.isdigit())
+                                   if c and c.vendor_id != sc.vendor_id and c.status != "ignored"][:30],
+                  msg=msg,
                   cos=sorted(sc.change_orders, key=lambda c: c.source_row_id),
                   snaps=snaps, reviews=reviews)
 

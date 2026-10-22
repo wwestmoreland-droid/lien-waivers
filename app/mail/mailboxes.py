@@ -143,6 +143,11 @@ def connect(db: Session, email_addr: str, role: str, refresh_token: str | None, 
     except TokenError as exc:
         mark_broken(db, mb, str(exc))
     audit(db, actor, "mailbox.connected", "mailbox", mb.email, role=mb.role, scopes=scopes)
+    if mb.status == "connected":
+        from app.contacts import backfill
+        from app.db.models import ContactBackfill
+        if db.scalar(select(ContactBackfill.id).where(ContactBackfill.mailbox_id == mb.id)) is None:
+            backfill.start(db, mb, actor)  # 12 months of contacts, overnight
     return mb
 
 

@@ -43,10 +43,7 @@
         <button class="btn sm primary">Send waivers to {{ suggestion.email }}</button></form>{% endif %}
       <div class="small muted">This changes only where the app sends waiver emails. Smartsheet isn't changed.</div></div>
     {% endif %}
-    {% if vendor_contacts %}
-    <div class="small" style="margin-top:6px">Other confirmed contacts:
-      {% for c in vendor_contacts if c.email != waiver_to %}{% if editor %}<a href="/contacts/{{ c.id }}">{% endif %}{{ c.name or c.email }}{% if editor %}</a>{% endif %} <span class="muted">{{ c.email }}{% if c.role %}, {{ ROLE_NAMES.get(c.role, c.role) }}{% endif %}</span>{{ ' · ' if not loop.last }}{% endfor %}</div>
-    {% endif %}
+    {% if not waiver_to and not suggestion %}<div class="warnbox">Nobody to send waivers to yet. Use a contact found in email below, or click "Look up in email".</div>{% endif %}
   </div>
 </div>
 <div class="panel">
@@ -62,6 +59,48 @@
     <p class="muted">One point per day of sync. The trend shows once there are two days of history.</p>
   {% endif %}
 </div>
+</div>
+
+<div class="panel" id="contacts">
+  <div class="row-actions" style="justify-content:space-between">
+    <h2 style="margin:0">Contacts found in email</h2>
+    {% if editor %}<form class="inline" method="post" action="/vendors/{{ sc.vendor_id }}/lookup">
+      <input type="hidden" name="back" value="/subs/{{ sc.id }}">
+      <button class="btn sm">Look up {{ sc.vendor.name }} in email</button></form>{% endif %}
+  </div>
+  {% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
+  <p class="small muted">Searches the last 12 months of contracts@ and ap@ for mail from {{ (sc.vendor.email_domains or [])|join(', ') or 'this vendor' }} or mentioning its name. Contacts are also picked up as new mail comes in.</p>
+  <div class="table-wrap"><table>
+    <tr><th>Name</th><th>Email</th><th>Role / title</th><th>Phone</th><th>Last emailed</th><th></th></tr>
+    {% for c in vendor_contacts %}
+    <tr><td>{% if editor %}<a href="/contacts/{{ c.id }}">{{ c.name or '(no name)' }}</a>{% else %}{{ c.name or '' }}{% endif %}
+        {% if c.status == 'new' %}<span class="badge new">not confirmed</span>{% endif %}
+        {% if c.source == 'smartsheet' %}<span class="badge">Smartsheet</span>{% endif %}</td>
+      <td class="small">{{ c.email }}</td>
+      <td class="small">{{ ROLE_NAMES.get(c.role or '', '') }}{% if c.title %}<div class="muted">{{ c.title }}</div>{% endif %}</td>
+      <td class="small">{{ c.phone or '' }}{% if c.mobile %}<br>m {{ c.mobile }}{% endif %}</td>
+      <td class="small">{{ c.last_seen_at|fdate if c.last_seen_at else 'not in email' }}</td>
+      <td>{% if editor %}{% if c.email == waiver_to %}<span class="badge ok">gets waivers</span>{% else %}
+        <form class="inline" method="post" action="/vendors/{{ sc.vendor_id }}/waiver-email">
+          <input type="hidden" name="back" value="/subs/{{ sc.id }}#contacts"><input type="hidden" name="contact_id" value="{{ c.id }}">
+          <button class="btn sm {{ 'primary' if c.role == 'billing' }}">Use for waivers</button></form>{% endif %}{% endif %}</td></tr>
+    {% else %}
+    <tr><td colspan="6" class="muted">None yet.</td></tr>
+    {% endfor %}
+  </table></div>
+  {% if found_elsewhere %}
+  <h3>Also on those messages, not matched to {{ sc.vendor.name }}</h3>
+  <p class="small muted">If one of these works for {{ sc.vendor.name }} (for example billing on a personal or bookkeeper address), add them.</p>
+  <div class="table-wrap"><table>
+    {% for c in found_elsewhere %}
+    <tr><td>{{ c.name or '' }}</td><td class="small">{{ c.email }}</td><td class="small">{{ c.vendor.name if c.vendor else 'Unassigned' }}{% if c.title %} · {{ c.title }}{% endif %}</td>
+      <td>{% if editor %}<form class="inline" method="post" action="/contacts/{{ c.id }}/assign">
+        <input type="hidden" name="back" value="/subs/{{ sc.id }}#contacts"><input type="hidden" name="vendor_id" value="{{ sc.vendor_id }}">
+        <select name="role"><option value="billing">Billing</option>{% for k, v in ROLE_NAMES.items() if k != 'billing' %}<option value="{{ k }}">{{ v }}</option>{% endfor %}</select>
+        <button class="btn sm">Add to {{ sc.vendor.name }}</button></form>{% endif %}</td></tr>
+    {% endfor %}
+  </table></div>
+  {% endif %}
 </div>
 
 <h2>Payables (in waiver order: date received, then row)</h2>

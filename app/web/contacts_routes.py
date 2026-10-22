@@ -112,15 +112,55 @@ def contact_save(cid: int, action: str = Form("save"), vendor_id: str = Form("")
     return RedirectResponse(target, status_code=303)
 
 
+def _back(back: str) -> str:
+    return back if back.startswith("/") and not back.startswith("//") else "/"
+
+
 @router.post("/vendors/{vid}/waiver-email")
-def vendor_waiver_email(vid: int, email: str = Form(""), back: str = Form("/"), db: Session = Depends(get_db),
-                        user: User = Depends(editor)):
+def vendor_waiver_email(vid: int, email: str = Form(""), contact_id: str = Form(""), back: str = Form("/"),
+                        db: Session = Depends(get_db), user: User = Depends(editor)):
     v = db.get(Vendor, vid)
     if not v:
         raise HTTPException(404)
+    if contact_id.isdigit():
+        # "Use for waivers" on a contact found in email: that also confirms them as this vendor's billing contact.
+        c = _contact(db, int(contact_id))
+        service.confirm(db, c, user.email, v.id, "billing")
+        email = c.email
     service.set_waiver_email(db, v, email, user.email)
     db.commit()
-    return RedirectResponse(back if back.startswith("/") and not back.startswith("//") else "/", status_code=303)
+    return RedirectResponse(_back(back), status_code=303)
+
+
+@router.post("/contacts/{cid}/assign")
+def contact_assign(cid: int, vendor_id: int = Form(...), role: str = Form(""), back: str = Form("/"),
+                   db: Session = Depends(get_db), user: User = Depends(editor)):
+    c = _contact(db, cid)
+    service.confirm(db, c, user.email, vendor_id, role or None)
+    db.commit()
+    return RedirectResponse(_back(back), status_code=303)
+
+
+@router.post("/vendors/{vid}/lookup")
+def vendor_lookup(vid: int, back: str = Form("/"), db: Session = Depends(get_db), user: User = Depends(editor)):
+    from urllib.parse import quote
+
+    from app.contacts.lookup import lookup_vendor
+
+    v = db.get(Vendor, vid)
+    if not v:
+        raise HTTPException(404)
+    found, problems = lookup_vendor(db, v)
+    db.commit()
+    mine = [c for c in (db.get(Contact, i) for i in found) if c and c.vendor_id == v.id]
+    msg = (f"Searched email for {v.name}: {len(found)} contact{'s' if len(found) != 1 else ''} on matching messages, "
+           f"{len(mine)} matched to {v.name}.")
+    if problems:
+        msg += " " + " ".join(problems)
+    target = _back(back).split("#")[0]
+    sep = "&" if "?" in target else "?"
+    return RedirectResponse(f"{target}{sep}found={','.join(map(str, found))}&msg={quote(msg)}#contacts",
+                            status_code=303)
 
 
 @router.post("/settings/mailboxes/{mid}/contacts-backfill")

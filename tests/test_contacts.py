@@ -255,3 +255,49 @@ def test_contact_pages(mail):
                    follow_redirects=False)
         assert r.status_code == 303
         assert db.scalar(select(ContactBackfill)).overnight_only
+
+
+def test_connecting_queues_overnight_backfill(mail):
+    bf = mail.db.scalar(select(ContactBackfill).where(ContactBackfill.mailbox_id == mail.sender.id))
+    assert bf is not None and bf.status == "queued" and bf.overnight_only
+
+
+def test_look_up_vendor_in_email_from_sub_page(mail):
+    db = mail.db
+    tri = db.scalar(select(Subcontract).where(Subcontract.source_row_id == 104))
+    assert service.waiver_email(tri) is None  # no billing email in All Subcontracts
+    # Billed by email before the mailbox was connected; seen only when we look it up.
+    mail.box.deliver(from_addr="kim@tristateglass.com", from_name="Kim Ortiz", subject="Tri-State Glass invoice 88",
+                     body="Invoice attached.\n\nKim Ortiz\nAccounts Payable\nTri-State Glass - Mirror\n(708) 555-0123")
+    mail.box.deliver(from_addr="books4you@gmail.com", from_name="Sam Books", subject="Tri-State Glass billing",
+                     body="hi")
+    tri.vendor.email_domains = ["tristateglass.com"]
+    db.commit()
+    with TestClient(create_app()) as c:
+        r = c.post(f"/vendors/{tri.vendor_id}/lookup", data={"back": f"/subs/{tri.id}"})
+        assert r.status_code == 200 and "Searched email for Tri-State Glass" in r.text
+        assert "kim@tristateglass.com" in r.text and "not confirmed" in r.text
+        assert "Add to Tri-State Glass" in r.text and "books4you@gmail.com" in r.text
+        kim = contact(db, "kim@tristateglass.com")
+        c.post(f"/vendors/{tri.vendor_id}/waiver-email", data={"contact_id": str(kim.id), "back": f"/subs/{tri.id}"})
+        kim = contact(db, "kim@tristateglass.com")
+        assert kim.status == "confirmed" and kim.role == "billing"
+        assert service.waiver_email(db.get(Subcontract, tri.id)) == "kim@tristateglass.com"
+        sam = contact(db, "books4you@gmail.com")
+        c.post(f"/contacts/{sam.id}/assign", data={"vendor_id": str(tri.vendor_id), "role": "billing",
+                                                   "back": f"/subs/{tri.id}"})
+        assert contact(db, "books4you@gmail.com").vendor_id == tri.vendor_id
+        assert "gmail.com" not in (db.get(Vendor, tri.vendor_id).email_domains or [])
+        assert c.get(f"/subs/{tri.id}").status_code == 200
+
+
+def test_existing_mailboxes_get_a_backfill(mail, monkeypatch):
+    from app.services import sync_runner
+    db = mail.db
+    db.query(ContactBackfill).delete()
+    db.commit()
+    monkeypatch.setattr(backfill, "is_night", lambda at=None: False)
+    sync_runner.contacts_backfill_now()
+    db.expire_all()
+    bf = db.scalar(select(ContactBackfill).where(ContactBackfill.mailbox_id == mail.sender.id))
+    assert bf.status == "queued" and bf.overnight_only

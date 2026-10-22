@@ -42,9 +42,13 @@ def contacts_backfill_now() -> dict:
     from sqlalchemy import select
 
     from app.contacts import backfill
-    from app.db.models import ContactBackfill
+    from app.db.models import ContactBackfill, Mailbox
 
     with session_scope() as db:
+        # Mailboxes connected before contact logging existed get their overnight backfill too.
+        for mb in db.scalars(select(Mailbox).where(Mailbox.status == "connected",
+                                                   ~Mailbox.id.in_(select(ContactBackfill.mailbox_id)))):
+            backfill.start(db, mb, "system")
         if not db.scalar(select(ContactBackfill.id).where(ContactBackfill.status.in_(backfill.ACTIVE)).limit(1)):
             return {}
     with job_lock("contacts_backfill"):
