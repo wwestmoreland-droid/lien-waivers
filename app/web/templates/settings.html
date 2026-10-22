@@ -7,7 +7,7 @@
   <a class="btn" href="/settings/email">Email templates and auto-send</a>
   <a class="btn" href="/settings/templates">Waiver PDF templates and feature flags</a>
 </div>
-<p class="sub">Smartsheet is read only: the app never writes to it.</p>
+<p class="sub">The app reads Smartsheet. The only thing it writes is contact cells in All Subcontracts (see below); everything else is read only.</p>
 {% set admin = user.role == 'Admin' %}
 
 <div class="panel">
@@ -18,6 +18,22 @@
     <label>Default reviewer <input type="email" name="reviewer" value="{{ reviewer }}" size="30" {{ 'disabled' if not admin }}></label>
     {% if admin %}<button class="btn primary">Save</button>{% endif %}
   </form>
+</div>
+
+<div class="panel" id="smartsheet-contacts">
+  <h2 style="margin-top:0">Contacts in All Subcontracts</h2>
+  <p class="small">{% if contact_fill %}<span class="badge ok">On</span> After each sync, blank Billing, PM, Estimator and Foreman name/email/phone cells are filled from confirmed contacts.
+    It reads each row again right before writing and never overwrites a value; replacing one takes a click on the sub's page. Every write is in the audit log.
+    {% else %}<span class="badge">Off</span> The app doesn't write to Smartsheet at all.{% endif %}</p>
+  {% if admin %}<form method="post" action="/settings/smartsheet-contact-fill" class="inline">
+    <input type="hidden" name="on" value="{{ '0' if contact_fill else '1' }}">
+    <button class="btn">{{ 'Turn off' if contact_fill else 'Turn on' }}</button></form>{% endif %}
+  {% if fills %}<div class="table-wrap" style="margin-top:8px"><table>
+    <tr><th>When</th><th>Who</th><th>Row</th><th>Cells</th></tr>
+    {% for a in fills %}<tr><td class="small">{{ a.at|fdate }}</td><td class="small">{{ a.actor }}</td>
+      <td class="small">{{ a.details.vendor }} · {{ a.details.project }}</td>
+      <td class="small">{% for k, v in (a.details.cells or a.details.after or {}).items() %}{{ k|replace('_', ' ') }}: {{ v or '(cleared)' }}{{ '; ' if not loop.last }}{% endfor %}</td></tr>{% endfor %}
+  </table></div>{% endif %}
 </div>
 
 <div class="panel" id="aliases">

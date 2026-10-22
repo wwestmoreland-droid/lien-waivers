@@ -27,8 +27,8 @@ def sync_from_subcontracts(db: Session) -> int:
     created = 0
     for sc in db.scalars(select(Subcontract).where(Subcontract.deleted_in_source.is_(False))):
         for addr, name, phone, role in ((sc.billing_email, sc.billing_name, sc.billing_phone, "billing"),
-                                        (sc.pm_email, sc.pm_name, None, "pm"),
-                                        (sc.estimator_email, sc.estimator_name, None, "estimator"),
+                                        (sc.pm_email, sc.pm_name, sc.pm_phone, "pm"),
+                                        (sc.estimator_email, sc.estimator_name, sc.estimator_phone, "estimator"),
                                         (sc.foreman_email, sc.foreman_name, sc.foreman_phone, "foreman")):
             if not addr or _domain(addr) == INTERNAL_DOMAIN:
                 continue

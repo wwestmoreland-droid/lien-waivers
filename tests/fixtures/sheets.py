@@ -125,3 +125,24 @@ class FakeSource:
 
     def row(self, key, row_id) -> SheetRow:
         return next(r for r in self.sheets[key] if r.row_id == row_id)
+
+
+class FakeContactWriter:
+    """Stands in for app.smartsheet.writer.ContactWriter, writing into a FakeSource."""
+
+    def __init__(self, source: FakeSource):
+        from app.smartsheet.writer import WRITABLE
+        self.source = source
+        self.allowed = WRITABLE
+        self.writes: list[tuple[int, dict]] = []
+
+    def get_row(self, row_id: int) -> dict:
+        v = self.source.row("subcontracts", row_id).values
+        return {k: (str(v[k]).strip() if v.get(k) not in (None, "") else None) for k in self.allowed}
+
+    def update_row(self, row_id: int, values: dict) -> None:
+        bad = [k for k in values if k not in self.allowed]
+        if bad:
+            raise PermissionError(bad)
+        self.writes.append((row_id, dict(values)))
+        self.source.row("subcontracts", row_id).values.update(values)

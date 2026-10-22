@@ -1,6 +1,6 @@
 # Buildout Pros: Lien Waivers & Cost to Complete
 
-This app replaces the Zapier + Smartsheet lien waiver automation. It keeps its own database as the source of record. Smartsheet is input only, and **the app never writes to Smartsheet**: the client only issues GET requests and refuses any other verb.
+This app replaces the Zapier + Smartsheet lien waiver automation. It keeps its own database as the source of record. Smartsheet is input, read by a client that only issues GET requests. The one exception is **contact cells in All Subcontracts** (billing, sub PM, estimator and foreman name/email/phone): `smartsheet/writer.py` can write only those twelve columns on that one sheet. After each sync it fills **blank** cells from confirmed contacts. It re-reads each row right before writing and never overwrites a value; replacing one takes a click on the sub's page. It can be switched off in Settings, and every write is in the audit log.
 
 ## Status: Phases 1–4a of 5
 
@@ -146,7 +146,7 @@ Anyone with a @buildoutpros.com Google account can sign in. Accounts in `ADMIN_E
 
 ```
 app/
-  smartsheet/   client.py (read only), columns.yaml (column IDs), sync.py
+  smartsheet/   client.py (read only), writer.py (contact cells only), columns.yaml (column IDs), sync.py
   matching/     normalize.py, resolver.py (aliases, direct purchases, Unmatched queue)
   ctc/          engine.py (point-in-time CTC), report.py (CSV/XLSX)
   services/     projects, audit, settings, locks, sync runner

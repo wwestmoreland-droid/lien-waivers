@@ -1,8 +1,8 @@
 """Read-only Smartsheet client.
 
-This module only issues GET requests. Buildout Pros asked that the app never change
-anything in Smartsheet, so there is deliberately no write method here, and the HTTP
-transport refuses any other verb.
+This module only issues GET requests, and the HTTP transport refuses any other verb. The
+app's only writes (blank contact cells in All Subcontracts) go through writer.py, which
+can't touch any other sheet or column.
 """
 from __future__ import annotations
 

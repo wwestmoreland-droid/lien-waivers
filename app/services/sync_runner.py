@@ -11,6 +11,7 @@ from app.smartsheet.sync import run_sync
 log = structlog.get_logger()
 
 _source_factory = SmartsheetClient
+_writer_factory = None
 
 
 def set_source_factory(factory) -> None:
@@ -19,13 +20,47 @@ def set_source_factory(factory) -> None:
     _source_factory = factory
 
 
+def set_writer_factory(factory) -> None:
+    global _writer_factory
+    _writer_factory = factory
+
+
+def contact_writer():
+    if _writer_factory is not None:
+        return _writer_factory()
+    from app.smartsheet.writer import ContactWriter
+    return ContactWriter()
+
+
 def sync_now(trigger: str = "schedule", backfill_projects: set[str] | None = None,
              source: SheetSource | None = None) -> int:
     with job_lock("sync"):
         src = source or _source_factory()
         with session_scope() as db:
             run = run_sync(db, src, trigger=trigger, backfill_projects=backfill_projects)
-            return run.id
+            run_id = run.id
+        fill_contact_cells(run_id)
+        return run_id
+
+
+def fill_contact_cells(run_id: int | None = None) -> dict:
+    """Fill blank contact cells in All Subcontracts; the result is added to the sync run's stats."""
+    from app.contacts import writeback
+    from app.db.models import SyncRun
+
+    with session_scope() as db:
+        try:
+            stats = writeback.fill_blanks(db, contact_writer())
+        except Exception as exc:
+            log.exception("smartsheet.fill_failed")
+            stats = {"rows": 0, "cells": 0, "errors": [f"{type(exc).__name__}: {exc}"[:300]]}
+        run = db.get(SyncRun, run_id) if run_id else None
+        if run is not None:
+            run.stats = dict(run.stats or {}) | {"smartsheet_rows_filled": stats["rows"],
+                                                 "smartsheet_cells_filled": stats["cells"]}
+            if stats.get("errors"):
+                run.errors = list(run.errors or []) + ["Smartsheet contact fill: " + e for e in stats["errors"]]
+        return stats
 
 
 def mail_now() -> dict:

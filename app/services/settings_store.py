@@ -25,6 +25,8 @@ def defaults() -> dict:
         "reminder_days": [7, 10],
         "escalation_day": 13,
         "email_templates": {},
+        # Fill blank contact cells in All Subcontracts from confirmed contacts (never overwrites).
+        "smartsheet_contact_fill": True,
     }
 
 

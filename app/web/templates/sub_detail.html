@@ -6,6 +6,7 @@
   · {{ sc.supplier_contractor or 'type not set' }} · {{ sc.payment_terms or 'terms not set' }}
   {% if sc.deleted_in_source %}<span class="badge bad">removed from Smartsheet</span>{% endif %}</p>
 
+{% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
 {% for r in reviews if r.status == 'open' %}<div class="warnbox">{{ r.message }}</div>{% endfor %}
 
 <div class="cards">
@@ -43,6 +44,13 @@
         <button class="btn sm primary">Send waivers to {{ suggestion.email }}</button></form>{% endif %}
       <div class="small muted">This changes only where the app sends waiver emails. Smartsheet isn't changed.</div></div>
     {% endif %}
+    {% if sheet_mismatch %}
+    <div class="warnbox">Smartsheet's Billing Email is <strong>{{ sc.billing_email }}</strong>, but waivers go to <strong>{{ sheet_mismatch.email }}</strong>{% if sheet_mismatch.name %} ({{ sheet_mismatch.name }}){% endif %}.
+      {% if editor %}<form class="inline" method="post" action="/subs/{{ sc.id }}/smartsheet-billing"><input type="hidden" name="expected" value="{{ sc.billing_email }}">
+        <button class="btn sm primary">Update Smartsheet to {{ sheet_mismatch.email }}</button></form>{% endif %}
+      <div class="small muted">Replaces Billing Contact Name, Billing Email and Billing Contact Number on this row only.</div></div>
+    {% endif %}
+    {% for a in sheet_writes %}<div class="small muted">{{ a.at|fdate }}: {{ a.actor }} {{ 'filled' if a.action == 'smartsheet.cells_filled' else 'replaced' }} in Smartsheet: {% for k, v in (a.details.cells or a.details.after or {}).items() %}{{ k|replace('_', ' ') }} {{ v or '(cleared)' }}{{ '; ' if not loop.last }}{% endfor %}</div>{% endfor %}
     {% if not waiver_to and not suggestion %}<div class="warnbox">Nobody to send waivers to yet. Use a contact found in email below, or click "Look up in email".</div>{% endif %}
   </div>
 </div>
@@ -68,7 +76,6 @@
       <input type="hidden" name="back" value="/subs/{{ sc.id }}">
       <button class="btn sm">Look up {{ sc.vendor.name }} in email</button></form>{% endif %}
   </div>
-  {% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
   <p class="small muted">Searches the last 12 months of contracts@ and ap@ for mail from {{ (sc.vendor.email_domains or [])|join(', ') or 'this vendor' }} or mentioning its name. Contacts are also picked up as new mail comes in.</p>
   <div class="table-wrap"><table>
     <tr><th>Name</th><th>Email</th><th>Role / title</th><th>Phone</th><th>Last emailed</th><th></th></tr>

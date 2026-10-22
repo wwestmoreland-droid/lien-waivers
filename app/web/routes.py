@@ -180,10 +180,16 @@ def sub_detail(request: Request, sc_id: int, found: str = "", msg: str = "", db:
     reviews = db.scalars(select(ReviewItem).where(ReviewItem.ref_type == "subcontract",
                                                   ReviewItem.ref_id == sc.id)).all()
     from app.contacts import service as contacts
+    from app.contacts import writeback
     from app.contacts.signature import ROLE_NAMES
     return render(request, "sub_detail.html", user, sc=sc, ctc=ctc, timeline=timeline, events=events,
                   waiver_to=contacts.waiver_email(sc), ROLE_NAMES=ROLE_NAMES,
                   suggestion=contacts.billing_suggestion(db, sc),
+                  sheet_mismatch=writeback.billing_mismatch(db, sc),
+                  sheet_writes=db.scalars(select(AuditLog).where(
+                      AuditLog.action.in_(("smartsheet.cells_filled", "smartsheet.billing_replaced")),
+                      AuditLog.entity_type == "subcontract", AuditLog.entity_id == str(sc.id))
+                      .order_by(AuditLog.id.desc()).limit(10)).all(),
                   vendor_contacts=contacts.vendor_contacts(db, sc.vendor_id, include_new=True),
                   found_elsewhere=[c for c in (db.get(Contact, int(i)) for i in found.split(",") if i.isdigit())
                                    if c and c.vendor_id != sc.vendor_id and c.status != "ignored"][:30],
@@ -407,6 +413,9 @@ def settings_page(request: Request, db: Session = Depends(get_db), user: User = 
         interval=get_setting(db, "sync_interval_minutes"),
         threshold=get_setting(db, "major_trade_threshold"),
         reviewer=get_setting(db, "default_reviewer_email"),
+        contact_fill=get_setting(db, "smartsheet_contact_fill"),
+        fills=db.scalars(select(AuditLog).where(AuditLog.action.in_(
+            ("smartsheet.cells_filled", "smartsheet.billing_replaced"))).order_by(AuditLog.id.desc()).limit(25)).all(),
         aliases=db.scalars(select(VendorAlias).join(Vendor).order_by(Vendor.name)).all(),
         directs=db.scalars(select(DirectPurchase).order_by(DirectPurchase.created_at.desc())).all(),
         vendors={v.id: v for v in db.scalars(select(Vendor))},
@@ -429,6 +438,35 @@ def save_general(interval: int = Form(...), threshold: float = Form(...), review
         set_setting(db, "default_reviewer_email", reviewer.strip().lower(), user.email)
     db.commit()
     return RedirectResponse("/settings", status_code=303)
+
+
+@router.post("/settings/smartsheet-contact-fill")
+def toggle_contact_fill(on: str = Form(...), db: Session = Depends(get_db), user: User = Depends(require_role("Admin"))):
+    set_setting(db, "smartsheet_contact_fill", on == "1", user.email)
+    db.commit()
+    return RedirectResponse("/settings#smartsheet-contacts", status_code=303)
+
+
+@router.post("/subs/{sc_id}/smartsheet-billing")
+def update_smartsheet_billing(sc_id: int, expected: str = Form(...), db: Session = Depends(get_db),
+                              user: User = Depends(require_role(*EDITORS))):
+    from urllib.parse import quote
+
+    from app.contacts import writeback
+    from app.services.sync_runner import contact_writer
+
+    sc = db.get(Subcontract, sc_id)
+    if not sc:
+        raise HTTPException(404)
+    try:
+        writeback.replace_billing(db, contact_writer(), sc, expected, user.email)
+        db.commit()
+        msg = "Smartsheet updated."
+    except ValueError as exc:
+        msg = str(exc)
+    except Exception as exc:
+        msg = f"Smartsheet didn't accept the change: {exc}"[:300]
+    return RedirectResponse(f"/subs/{sc_id}?msg={quote(msg)}", status_code=303)
 
 
 @router.post("/settings/aliases/{aid}/delete")
