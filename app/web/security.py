@@ -81,7 +81,14 @@ def production_problems(s: Settings) -> list[str]:
         problems.append("GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are required.")
     if s.mail_provider != "gmail":
         problems.append("MAIL_PROVIDER must be gmail on a public server.")
-    if s.database_url.startswith("sqlite"):
+    if "${{" in s.database_url:
+        problems.append("DATABASE_URL still contains ${{...}}, so Railway couldn't find the database it names. "
+                        "Check the Postgres service's exact name (shown on its card) and use "
+                        "${{<that name>.DATABASE_URL}}, or pick it from the variable reference dropdown.")
+    elif not s.database_url.startswith(("sqlite", "postgres://", "postgresql://", "postgresql+psycopg://")):
+        problems.append("DATABASE_URL isn't a Postgres connection string (it should start with postgresql://). "
+                        "Set it to ${{Postgres.DATABASE_URL}}.")
+    elif s.database_url.startswith("sqlite"):
         problems.append("DATABASE_URL isn't set, so the app would keep its data in a temporary file that is "
                         "wiped on every deploy. Set DATABASE_URL to ${{Postgres.DATABASE_URL}} (the Postgres "
                         "service's connection string).")

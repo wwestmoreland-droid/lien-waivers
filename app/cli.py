@@ -18,8 +18,14 @@ def migrate() -> None:
     from alembic import command
     from alembic.config import Config
 
-    from app.config import BASE_DIR
+    from app.config import BASE_DIR, get_settings
+    from app.web.security import production_problems
 
+    problems = production_problems(get_settings())
+    if any("DATABASE_URL" in p for p in problems):
+        # Don't crash-loop: skip migrating so the app starts and its page says what to fix.
+        typer.echo("Skipping migration: " + " ".join(p for p in problems if "DATABASE_URL" in p))
+        return
     command.upgrade(Config(str(BASE_DIR / "alembic.ini")), "head")
     typer.echo("Database is up to date.")
 

@@ -51,6 +51,13 @@ class Settings(BaseSettings):
     # Optional; when empty the mailbox token key is derived from SECRET_KEY.
     fernet_key: str = ""
 
+    @field_validator("database_url")
+    @classmethod
+    def _clean_database_url(cls, v: str) -> str:
+        """Pasted values often carry quotes or spaces; an empty value means "not set"."""
+        v = v.strip().strip("'\"").strip()
+        return v or cls.model_fields["database_url"].default
+
     @field_validator("app_base_url")
     @classmethod
     def _normalize_base_url(cls, v: str) -> str:

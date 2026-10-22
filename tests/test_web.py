@@ -236,7 +236,9 @@ def test_unsafe_production_settings_refuse_to_start():
     base["database_url"] = "postgresql://u:p@db:5432/railway"
     check_production_settings(Settings(**base))
     for bad in (dict(secret_key="dev-only-change-me"), dict(dev_auth_email="a@buildoutpros.com"),
-                dict(google_client_id=""), dict(mail_provider="fake"), dict(database_url="sqlite:////app/data/x.db")):
+                dict(google_client_id=""), dict(mail_provider="fake"), dict(database_url="sqlite:////app/data/x.db"),
+                dict(database_url="${{Postgres.DATABASE_URL}}"), dict(database_url="  "),
+                dict(database_url="mysql://x")):
         with _pytest.raises(RuntimeError):
             check_production_settings(Settings(**(base | bad)))
 
@@ -251,3 +253,8 @@ def test_unsafe_settings_lock_the_app_instead_of_crashing():
     r = c.get("/email")
     assert r.status_code == 503 and "SECRET_KEY" in r.text
     assert c.post("/projects/x/track").status_code == 503
+
+
+def test_database_url_quotes_and_spaces_are_cleaned():
+    from app.config import Settings
+    assert Settings(database_url=' "postgresql://u:p@h/db" ').database_url == "postgresql://u:p@h/db"
