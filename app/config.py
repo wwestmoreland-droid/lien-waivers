@@ -43,8 +43,12 @@ class Settings(BaseSettings):
     major_trade_threshold: float = 20000.0
     run_scheduler: bool = True
 
-    # Later phases
+    # Email
+    mail_provider: str = "gmail"  # gmail, or "fake" for tests and local development
+    # Claude reads returned waivers (advisory check). Empty: returned copies aren't checked.
     anthropic_api_key: str = ""
+    claude_model: str = "claude-opus-5-5"
+    # Optional; when empty the mailbox token key is derived from SECRET_KEY.
     fernet_key: str = ""
 
     @field_validator("app_base_url")

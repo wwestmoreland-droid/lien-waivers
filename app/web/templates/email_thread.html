@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}{{ e.subject or 'Email' }}{% endblock %}
+{% block content %}
+{% set editor = user.role in ('Admin', 'AP') %}
+<p class="small"><a href="/email">← Email</a></p>
+<h1>{{ e.subject or '(no subject)' }}</h1>
+<p class="sub">
+  {% if e.waiver %}Linked to <a href="/waivers/{{ e.waiver_id }}">waiver #{{ e.waiver_id }}</a> · {{ e.waiver.subcontract.vendor.name }} · {{ e.project_number }} · {{ e.waiver.status }}{% if e.match_method %} <span class="muted">(matched by {{ e.match_method }})</span>{% endif %}
+  {% else %}<span class="badge warn">Not linked to a waiver</span>{% if e.vendor %} · from {{ e.vendor.name }}{% endif %}{% endif %}
+  {% if e.found_in %} · <span class="badge warn">Found in {{ e.found_in }}</span>{% endif %}
+</p>
+{% if request.query_params.get('msg') %}<div class="warnbox">{{ request.query_params.get('msg') }}</div>{% endif %}
+{% if e.found_in %}<div class="warnbox">This came in to {{ e.found_in }}, which the app only reads. The original stays where it is. Link it to the right waiver below, then file the attachment as the signed copy.</div>{% endif %}
+
+{% if editor %}
+<div class="panel row-actions">
+  <form class="inline" method="post" action="/email/{{ e.id }}/link">
+    <select name="waiver_id" required>
+      <option value="">{{ 'Change link…' if e.waiver_id else 'Link to waiver…' }}</option>
+      {% for w in waivers %}<option value="{{ w.id }}">#{{ w.id }} {{ w.subcontract.vendor.name }} · {{ w.subcontract.project.number }} · {{ WaiverType(w.type).label }} · {{ w.status }}</option>{% endfor %}
+    </select>
+    <button class="btn sm">Link</button>
+  </form>
+  {% if e.direction == 'in' %}
+  <form class="inline" method="post" action="/email/{{ e.id }}/state">
+    {% set st = states.get(e.id) %}
+    {% if st and st.handled_at %}<input type="hidden" name="handled" value="no"><button class="btn sm">Mark not handled</button>
+    {% else %}<input type="hidden" name="handled" value="yes"><button class="btn sm">Mark handled</button>{% endif %}
+  </form>
+  <form class="inline" method="post" action="/email/{{ e.id }}/state"><input type="hidden" name="read" value="no"><button class="btn sm">Mark unread</button></form>
+  {% endif %}
+</div>
+{% endif %}
+
+{% for m in thread %}
+<div class="panel" {% if m.id == e.id %}style="border-color:var(--accent)"{% endif %}>
+  <div class="row-actions" style="justify-content:space-between">
+    <div><strong>{{ m.from_name or m.from_addr or (m.mailbox.email if m.mailbox else '') }}</strong>
+      <span class="small muted">&lt;{{ m.from_addr or (m.mailbox.email if m.mailbox else '') }}&gt; → {{ (m.to_addrs or [])|join(', ') }}{% if m.cc_addrs %} · cc {{ m.cc_addrs|join(', ') }}{% endif %}</span></div>
+    <div class="small muted">{{ (m.sent_at or m.received_at or m.created_at)|fdate }}
+      {% if m.direction == 'out' %}<span class="badge {{ 'bad' if m.status in ('bounced', 'failed') else '' }}">{{ m.status }}</span>{% endif %}
+      {% if m.is_auto_reply %}<span class="badge">auto-reply</span>{% endif %}</div>
+  </div>
+  {% if m.direction == 'out' and m.status in ('draft', 'queued', 'failed') %}<p class="small"><a href="/email/{{ m.id }}/edit">Draft in Outbox: review and send</a></p>{% endif %}
+  <pre style="white-space:pre-wrap;font:inherit;margin:10px 0">{{ m.body_text or '' }}</pre>
+  {% for a in m.attachments %}
+    <div class="panel" style="padding:8px;margin:8px 0">
+      <div class="row-actions" style="justify-content:space-between">
+        <a href="/email/attachment/{{ a.id }}" target="_blank">{{ a.filename }}</a>
+        {% if editor and m.direction == 'in' and e.waiver and e.waiver.status in ('sent', 'rejected', 'draft') and (a.is_pdf or a.is_image) %}
+          <form class="inline" method="post" action="/email/{{ m.id }}/use-as-signed"><input type="hidden" name="attachment_id" value="{{ a.id }}"><button class="btn sm primary">File as signed copy of #{{ e.waiver_id }}</button></form>
+        {% endif %}
+      </div>
+      {% if a.is_pdf %}<iframe src="/email/attachment/{{ a.id }}" title="{{ a.filename }}" style="width:100%;height:520px;border:0;margin-top:6px"></iframe>
+      {% elif a.is_image %}<img src="/email/attachment/{{ a.id }}" alt="{{ a.filename }}" style="max-width:100%;margin-top:6px">{% endif %}
+    </div>
+  {% endfor %}
+</div>
+{% endfor %}
+
+{% if editor %}
+<div class="panel">
+  <h2 style="margin-top:0">Reply</h2>
+  <form method="post" action="/email/{{ e.id }}/reply" class="filters">
+    <select name="mode"><option value="reply">Reply</option><option value="reply_all">Reply all</option><option value="forward">Forward</option></select>
+    <select name="template">{% for k, label in reply_templates %}<option value="{{ k }}">{{ label }}</option>{% endfor %}</select>
+    <input name="reason" placeholder="Reason (for Needs correction)" size="28">
+    <button class="btn primary">Write it</button>
+    <span class="small muted">Opens the draft so you can edit it before sending. Replies stay in the same thread.</span>
+  </form>
+</div>
+{% endif %}
+{% endblock %}

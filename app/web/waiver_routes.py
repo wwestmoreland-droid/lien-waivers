@@ -75,8 +75,10 @@ def waiver_detail(request: Request, wid: int, msg: str = "", db: Session = Depen
                         .order_by(Waiver.id)).all()
     reasons = [r.format(amount=f"${w.amount:,.2f}" if w.amount else "", through_date=
                         w.through_date.strftime("%b %-d, %Y") if w.through_date else "") for r in REJECT_REASONS]
+    from app.db.models import EmailMessage
+    emails = db.scalars(select(EmailMessage).where(EmailMessage.waiver_id == w.id).order_by(EmailMessage.id)).all()
     return templates.TemplateResponse(request, "waiver_detail.html", {
-        "user": user, "w": w, "WaiverType": WaiverType, "editable": w.status in service.EDITABLE,
+        "user": user, "w": w, "WaiverType": WaiverType, "editable": w.status in service.EDITABLE, "emails": emails,
         "others": others, "reasons": reasons, "msg": msg,
         "notary_required": (service.registry().templates[w.template_key].notary_required
                             if w.template_key in service.registry().templates else True)})
@@ -149,16 +151,16 @@ def accept(wid: int, note: str = Form(""), db: Session = Depends(get_db),
     w = _waiver(db, wid)
     if user.role == "PM" and (w.subcontract.project.pm_email or "").lower() != user.email:
         raise HTTPException(403, "PMs can accept waivers on their own jobs only.")
-    return _act(db, w, service.accept, user.email, note)
+    return _act(db, w, service.accept_and_ack, user.email, note)
 
 
 @router.post("/waivers/{wid}/reject")
-def reject(wid: int, reason: str = Form(...), db: Session = Depends(get_db),
+def reject(wid: int, reason: str = Form(...), custom_reason: str = Form(""), db: Session = Depends(get_db),
            user: User = Depends(require_role("Admin", "AP", "PM"))):
     w = _waiver(db, wid)
     if user.role == "PM" and (w.subcontract.project.pm_email or "").lower() != user.email:
         raise HTTPException(403, "PMs can reject waivers on their own jobs only.")
-    return _act(db, w, service.reject, user.email, reason)
+    return _act(db, w, service.reject_and_reply, user.email, custom_reason.strip() or reason)
 
 
 @router.post("/waivers/{wid}/void")

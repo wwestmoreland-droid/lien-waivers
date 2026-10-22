@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}All mail{% endblock %}
+{% block content %}
+<h1>All {{ mb.email if mb else '' }} mail</h1>
+<p class="sub">Read live from Gmail; the app doesn't store these. Bring one in to link it to a waiver. <a href="/email">Back to waiver mail</a></p>
+<form class="filters" method="get">
+  <input type="search" name="q" value="{{ q }}" placeholder="Gmail search, e.g. from:billing@acme.com has:attachment" size="50">
+  <button class="btn">Search</button>
+</form>
+{% if error %}<div class="warnbox">{{ error }}</div>{% endif %}
+<div class="table-wrap"><table>
+  <tr><th>From</th><th>Subject</th><th>Date</th><th></th></tr>
+  {% for r in rows %}
+  <tr style="{{ 'font-weight:600' if r.unread }}">
+    <td>{{ r.from_name or r.from_addr }}<div class="small muted">{{ r.from_addr }}</div></td>
+    <td>{{ r.subject or '(no subject)' }}<div class="small muted">{{ r.snippet[:140] }}</div></td>
+    <td class="small">{{ r.date|fdate }}</td>
+    <td>{% if r.message_id in known %}<span class="badge ok">in app</span>
+      {% elif user.role in ('Admin', 'AP') %}<form class="inline" method="post" action="/email/all/{{ r.message_id }}/import"><button class="btn sm">Bring into app</button></form>{% endif %}</td>
+  </tr>
+  {% else %}
+  {% if not error %}<tr><td colspan="4" class="muted">Nothing found.</td></tr>{% endif %}
+  {% endfor %}
+</table></div>
+{% endblock %}

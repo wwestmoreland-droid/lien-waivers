@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}Email{% endblock %}
+{% block content %}
+{% set editor = user.role in ('Admin', 'AP') %}
+<div class="row-actions" style="justify-content: space-between">
+  <div>
+    <h1>Email</h1>
+    <p class="sub">{% if sender %}Sending from {{ sender.email }}.{% else %}<strong>No Sender mailbox connected.</strong> <a href="/settings/mailboxes">Connect one</a>.{% endif %}
+      Waiver and supplier mail only; <a href="/email/all">see all {{ sender.email if sender else 'mailbox' }} mail</a>.</p>
+  </div>
+  <div class="row-actions">
+    {% if editor %}<form class="inline" method="post" action="/mail/check-now"><button class="btn">Check mail now</button></form>
+    <a class="btn primary" href="/email-new">New email</a>{% endif %}
+  </div>
+</div>
+{% if request.query_params.get('msg') %}<div class="flash">{{ request.query_params.get('msg') }}</div>{% endif %}
+{% if request.query_params.get('sent') %}<div class="flash">Sent.</div>{% endif %}
+
+<div class="tabs">
+  <a href="/email?view=inbox" class="{{ 'on' if view == 'inbox' }}">Inbox{% if counts.unmatched %} ({{ counts.unmatched }} unmatched){% endif %}</a>
+  <a href="/email?view=outbox" class="{{ 'on' if view == 'outbox' }}">Outbox ({{ counts.outbox }})</a>
+  <a href="/email?view=sent" class="{{ 'on' if view == 'sent' }}">Sent</a>
+</div>
+
+<form class="filters" method="get">
+  <input type="hidden" name="view" value="{{ view }}">
+  <input type="search" name="q" value="{{ f.q }}" placeholder="Search subject, body, sender">
+  <select name="project"><option value="">All projects</option>{% for p in projects %}<option value="{{ p.number }}" {{ 'selected' if f.project == p.number }}>{{ p.number }} {{ (p.name or '')[:30] }}</option>{% endfor %}</select>
+  <select name="vendor"><option value="">All subs</option>{% for v in vendors %}<option value="{{ v.id }}" {{ 'selected' if f.vendor == v.id }}>{{ v.name }}</option>{% endfor %}</select>
+  <select name="wstatus"><option value="">Any waiver status</option>{% for s in statuses %}<option value="{{ s.value }}" {{ 'selected' if f.wstatus == s.value }}>{{ s.value|replace('_', ' ') }}</option>{% endfor %}</select>
+  {% if view == 'inbox' %}
+  <label><input type="checkbox" name="unread" value="1" {{ 'checked' if f.unread }}> Unread</label>
+  <label><input type="checkbox" name="needs" value="1" {{ 'checked' if f.needs }}> Needs action</label>
+  {% endif %}
+  <button class="btn">Filter</button>
+</form>
+
+{% if view == 'outbox' %}
+<form method="post" action="/email/send-selected">
+<div class="table-wrap"><table>
+  <tr>{% if editor %}<th><input type="checkbox" onclick="document.querySelectorAll('.pick').forEach(c => c.checked = this.checked)"></th>{% endif %}<th>Type</th><th>To</th><th>Subject</th><th>Waiver</th><th>Status</th><th>Created</th><th></th></tr>
+  {% for e in rows %}
+  <tr>
+    {% if editor %}<td><input class="pick" type="checkbox" name="ids" value="{{ e.id }}"></td>{% endif %}
+    <td>{{ KIND_LABELS.get(e.kind, e.kind) }}</td>
+    <td class="small">{{ (e.to_addrs or [])|join(', ') or '—' }}{% if e.cc_addrs %}<div class="muted">cc {{ e.cc_addrs|join(', ') }}</div>{% endif %}</td>
+    <td><a href="/email/{{ e.id }}/edit">{{ e.subject or '(no subject)' }}</a>
+      {% if e.error %}<div class="small" style="color:var(--bad)">{{ e.error }}</div>{% endif %}</td>
+    <td class="small">{% if e.waiver_id %}<a href="/waivers/{{ e.waiver_id }}">#{{ e.waiver_id }}</a>{% endif %}</td>
+    <td><span class="badge {{ 'new' if e.status == 'draft' else 'bad' }}">{{ e.status }}</span></td>
+    <td class="small">{{ e.created_at|fdate }}</td>
+    <td>{% if editor %}<a class="btn sm" href="/email/{{ e.id }}/edit">Review</a>{% endif %}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="8" class="muted">Nothing waiting to go out.</td></tr>
+  {% endfor %}
+</table></div>
+{% if editor and rows %}<p><button class="btn primary">Send all selected</button></p>{% endif %}
+</form>
+
+{% elif view == 'sent' %}
+<div class="table-wrap"><table>
+  <tr><th>Type</th><th>To</th><th>Subject</th><th>From</th><th>Waiver</th><th>Status</th><th>Sent</th></tr>
+  {% for e in rows %}
+  <tr>
+    <td>{{ KIND_LABELS.get(e.kind, e.kind) }}</td>
+    <td class="small">{{ (e.to_addrs or [])|join(', ') }}</td>
+    <td><a href="/email/{{ e.id }}">{{ e.subject or '(no subject)' }}</a>{% if e.error %}<div class="small" style="color:var(--bad)">{{ e.error }}</div>{% endif %}</td>
+    <td class="small">{{ e.from_addr or '' }}</td>
+    <td class="small">{% if e.waiver_id %}<a href="/waivers/{{ e.waiver_id }}">#{{ e.waiver_id }}</a>{% endif %}</td>
+    <td><span class="badge {{ 'bad' if e.status == 'bounced' else 'ok' }}">{{ e.status }}</span></td>
+    <td class="small">{{ e.sent_at|fdate }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="7" class="muted">Nothing sent yet.</td></tr>
+  {% endfor %}
+</table></div>
+
+{% else %}
+<div class="table-wrap"><table>
+  <tr><th>From</th><th>Subject</th><th>Linked to</th><th>Attachments</th><th>Received</th></tr>
+  {% for e in rows %}
+  {% set st = states.get(e.id) %}
+  <tr style="{{ '' if st and st.read_at else 'font-weight:600' }}">
+    <td>{{ e.from_name or e.from_addr }}<div class="small muted">{{ e.from_addr }}</div></td>
+    <td><a href="/email/{{ e.id }}">{{ e.subject or '(no subject)' }}</a>
+      {% if e.found_in %} <span class="badge warn">Found in {{ e.found_in }}</span>{% endif %}
+      {% if e.is_auto_reply %} <span class="badge">auto-reply</span>{% endif %}
+      {% if e.kind == 'bounce' %} <span class="badge bad">bounce</span>{% endif %}
+      {% if st and st.handled_at %} <span class="badge ok">handled</span>{% endif %}
+      <div class="small muted">{{ (e.body_text or '')[:110] }}</div></td>
+    <td class="small">{% if e.waiver %}<a href="/waivers/{{ e.waiver_id }}">#{{ e.waiver_id }} {{ e.waiver.subcontract.vendor.name }}</a><div class="muted">{{ e.project_number }} · {{ e.waiver.status }}</div>
+      {% else %}<span class="badge warn">unmatched</span>{% if e.vendor %}<div class="muted">{{ e.vendor.name }}</div>{% endif %}{% endif %}</td>
+    <td class="small">{{ e.attachments|length or '' }}</td>
+    <td class="small">{{ e.received_at|fdate }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="5" class="muted">No waiver mail yet.</td></tr>
+  {% endfor %}
+</table></div>
+{% endif %}
+{% endblock %}

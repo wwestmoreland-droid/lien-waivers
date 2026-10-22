@@ -18,6 +18,10 @@ def defaults() -> dict:
         "default_reviewer_email": s.default_reviewer_email,
         "picker_statuses": [7, 8, 9],
         "conditional_partial_enabled": False,
+        # Email types that skip the Outbox and go out on their own (all off: review before send).
+        "auto_send": {},
+        "send_received_reply": False,
+        "email_templates": {},
     }
 
 

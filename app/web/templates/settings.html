@@ -2,8 +2,12 @@
 {% block title %}Settings{% endblock %}
 {% block content %}
 <h1>Settings</h1>
-<p class="sub"><a href="/settings/templates">Waiver templates and feature flags</a>. Mailboxes, email templates and reminders are added in Phase 3.
-Smartsheet is read only: the app never writes to it.</p>
+<div class="panel row-actions">
+  <a class="btn" href="/settings/mailboxes">Mailboxes</a>
+  <a class="btn" href="/settings/email">Email templates and auto-send</a>
+  <a class="btn" href="/settings/templates">Waiver PDF templates and feature flags</a>
+</div>
+<p class="sub">Smartsheet is read only: the app never writes to it.</p>
 {% set admin = user.role == 'Admin' %}
 
 <div class="panel">

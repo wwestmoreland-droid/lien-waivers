@@ -133,6 +133,8 @@ def _project_values(row: SheetRow, source_sheet: str) -> dict | None:
         "owner": text(v.get("owner")),
         "pm_name": text(pm),
         "pm_email": _email(pm),
+        "estimator_name": text(v.get("estimator")),
+        "estimator_email": _email(v.get("estimator")),
         "contract_amount": to_decimal(v.get("contract_amount")),
         "source_sheet": source_sheet,
         "source_row_id": row.row_id,

@@ -1,0 +1,6 @@
+Hi {first_name},
+
+Following up on the lien waiver for {project_name} ({amount}). It's attached again. Can you send the signed copy back?
+
+Thanks,
+{signature}

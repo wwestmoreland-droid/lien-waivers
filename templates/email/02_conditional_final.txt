@@ -1,0 +1,13 @@
+Subject: Final lien waiver – {project_name} – {amount} [LW-{id}]
+
+Hi {first_name},
+
+Your final invoice for {project_name} ({amount}) is approved. Attached is the conditional final lien waiver.
+
+Please sign it, get it notarized, and send it back.
+[if suppliers] Please also send conditional final lien waivers from your suppliers on this job: {supplier_names}.
+[if gate] We'll release payment as soon as we have everything.
+[if exceptions] We listed these open items as exceptions: {exceptions}. Let me know if we missed anything.
+
+Thanks,
+{signature}

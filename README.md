@@ -2,14 +2,14 @@
 
 This app replaces the Zapier + Smartsheet lien waiver automation. It keeps its own database as the source of record. Smartsheet is input only, and **the app never writes to Smartsheet**: the client only issues GET requests and refuses any other verb.
 
-## Status: Phases 1 and 2 of 5
+## Status: Phases 1–3 of 5
 
 | Phase | Scope | State |
 |---|---|---|
 | 1 | Smartsheet sync, Projects picker, data model, vendor matching + Unmatched queue, CTC engine + report, read-only dashboard, Google sign-in, Railway deploy files | **Done** |
 | 2 | Waiver decision engine, template registry, PDF filling + `calibrate`, Waivers page | **Done** |
-| 3 | Mailboxes (Google sign-in per mailbox), Email center, outbound requests, inbound matching, verification, reminders | Next |
-| 4 | Contact logging (contracts@, ap@ via wwestmoreland@), supplier disclosure for major trades | |
+| 3 | Mailboxes (Google sign-in per mailbox), Email center, outbound requests, inbound matching, verification, reminders | **Done** |
+| 4 | Contact logging (contracts@, ap@ via wwestmoreland@), supplier disclosure for major trades | Next |
 | 5 | Payment status view (warn only), auto-send switches, deployment runbook | |
 
 ## How it works (Phase 1)
@@ -43,6 +43,31 @@ The CTC engine was run on real Smartsheet rows for P--IL-102125-1 (IMAGE Studios
 - **Templates** (`templates/pdf/registry.yaml`) are keyed by (state, type). **Every state uses the same three Buildout Pros forms for now** (`statutory_states: []`). The state mechanism is kept for later: list a state under `statutory_states` and waivers on its jobs are **blocked** ("Statutory form required for {STATE}; add template.") until a form is registered for it. To add one, put the PDF in `templates/pdf/<STATE>/`, add an entry, tune the positions with `lw calibrate`, and click **Reload registry and recheck** on Settings → Waiver templates.
 - **PDFs** are filled by drawing on top of the flat forms (reportlab + pypdf). The app fills: project name, project address, amount, through date (partials), exceptions (conditional final), today's date, the sub's company name, and "Buildout Pros LLC" on the unconditional final, where the form left it blank. The sub's address, signature, printed name and the notary block stay blank for the sub.
 - **Waivers page**: filter by status, project and type. Preview the PDF, change the through date (it defaults to Date Received and is flagged as a fallback), edit exceptions, regenerate, mark sent, upload the signed copy, accept or reject, void. Edits are only allowed before sending. Every change is added to the waiver's history; nothing is overwritten.
+
+## How it works (Phase 3: email)
+
+- **Mailboxes** (Settings → Mailboxes): click **Connect a Google mailbox as Sender** and sign in *as* contracts@. Click **Connect a read-only source** and sign in as wwestmoreland@, then set "Only read mail addressed to" to `ap@buildoutpros.com`, so only forwarded ap@ mail is read. Tokens are stored encrypted in the database (key from `FERNET_KEY`, or derived from `SECRET_KEY`). Changing the Sender moves new mail to the new mailbox; threads already in progress keep replying from the mailbox that started them ("Listening"). If Google stops accepting a mailbox's sign-in, a red banner appears on every page and outgoing mail queues until it's reconnected.
+- **Outbound.** Each new waiver gets a request email drafted in the **Outbox** with the PDF attached:
+  - To: the sub's billing email. CC: the sub's PM and estimator (from All Subcontracts).
+  - Subject ends in `[LW-{id}]`.
+  - Nothing goes out until someone clicks **Send** or **Send all selected**. Settings → Email can switch individual types to auto-send.
+  - Threads the app sends get the Gmail label `Lien Waivers`. Nothing is archived, moved or deleted.
+- **Templates** (`templates/email/`) are the fixed texts from the spec. Edits made on Settings → Email are stored in the database and checked against the writing rules. Payment gating is warn-only, so "payment is on hold" lines never appear. That includes the conditional final's "We'll release payment as soon as we have everything", which is behind `[if gate]`.
+- **Inbound** (every sync interval, plus **Check mail now**). Each mailbox is read incrementally (Gmail history). Waiver-related mail is kept: replies in known threads, `[LW-…]` tokens, and mail from a vendor on a tracked job that has an attachment or mentions a lien or waiver. Matching goes by thread, then token, then sender when the vendor has exactly one waiver waiting; anything else goes to the **Unmatched inbox**.
+  - A PDF or image reply marks the waiver Received and runs the automatic check.
+  - Out-of-office replies and replies with no attachment are logged only.
+  - A bounce marks the email Bounced, flags the vendor, and opens a review item listing the vendor's other addresses.
+- **Read-only source.** Mail there with a token, or a waiver-looking attachment from a tracked vendor, shows as **Found in ap@**. A person links it and clicks **File as signed copy**. The mailbox itself is never changed.
+- **Verification.** When `ANTHROPIC_API_KEY` is set, Claude (`claude-opus-5-5`, with the server-side refusal fallback on) reads the returned PDF or image and reports what it found: signed, notarized, form type, amount, through date, project. The app compares that with the request. The result appears in Queues → Verification and on the waiver page as a guide. A person always clicks Accept, or Reject, which drafts the "please correct" reply in the same thread.
+- **Reminders** run daily at 8:00 AM Central: day 3 (waiver attached again) and day 7 go to the sub in the same thread, and day 10 is an internal escalation to the job's PM and estimator from INTAKE. All go to the Outbox unless set to auto-send. **Daily digest**: `/digest`.
+- **Email center** (`/email`): Inbox, Outbox, Sent; filters, search, read/handled per user; reply, reply all and forward with a template picker; **see all contracts@ mail** reads the whole mailbox live from Gmail, and any message can be brought in and linked.
+
+### Gmail setup (one time, in the same Google Cloud project as sign-in)
+
+1. **APIs & Services → Library → Gmail API → Enable** (or `gcloud services enable gmail.googleapis.com`).
+2. **Google Auth Platform → Data access → Add or remove scopes**: add `.../auth/gmail.modify`, `.../auth/gmail.send` and `.../auth/gmail.readonly`. The app is Internal, so Google doesn't review these.
+3. If the Workspace admin restricts third-party access to Gmail, trust the client ID once in admin.google.com (Security → Access and data control → API controls → Manage Third-Party App Access).
+4. In Railway, add `ANTHROPIC_API_KEY` to turn on the automatic check (optional; without it, returned copies are checked by eye).
 
 ## Running locally
 

@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Daily digest{% endblock %}
+{% block content %}
+<h1>Daily digest</h1>
+<p class="sub">{{ today|fdate }}. Outstanding waivers, invoices on hold, and what's waiting in each queue.</p>
+
+<div class="cards">
+  <a class="card" href="/email?view=outbox"><div class="k">Outbox to review</div><div class="v">{{ outbox }}</div></a>
+  <a class="card {{ 'alert' if to_verify }}" href="/queues#verify"><div class="k">Waivers to verify</div><div class="v">{{ to_verify|length }}</div></a>
+  <a class="card" href="/waivers?status=sent"><div class="k">Waiting on subs</div><div class="v">{{ outstanding|length }}</div></a>
+  <a class="card {{ 'alert' if unmatched }}" href="/email?view=inbox"><div class="k">Unmatched email</div><div class="v">{{ unmatched }}</div></a>
+  <a class="card {{ 'alert' if reviews }}" href="/queues#review"><div class="k">Review queue</div><div class="v">{{ reviews }}</div></a>
+</div>
+
+<h2>Outstanding waivers (oldest first)</h2>
+<div class="table-wrap"><table>
+  <tr><th>Sub</th><th>Project</th><th>Type</th><th class="n">Amount</th><th>Sent</th><th class="n">Days</th><th>Follow-up</th></tr>
+  {% for w in outstanding %}
+  {% set d = days.get(w.id, 0) %}
+  <tr><td><a href="/waivers/{{ w.id }}">{{ w.subcontract.vendor.name }}</a></td><td>{{ w.subcontract.project.number }}</td>
+    <td>{{ WaiverType(w.type).label }}</td><td class="n">{{ w.amount|money }}</td><td class="small">{{ w.sent_at|fdate }}</td>
+    <td class="n">{% if d >= 10 %}<span class="badge bad">{{ d }}</span>{% elif d >= 3 %}<span class="badge warn">{{ d }}</span>{% else %}{{ d }}{% endif %}</td>
+    <td class="small">{{ w.reminder_count or 0 }} reminder{{ 's' if (w.reminder_count or 0) != 1 }}{% if w.escalated_at %}, escalated {{ w.escalated_at|fdate }}{% endif %}{% if w.status == 'rejected' %}, correction requested{% endif %}</td></tr>
+  {% else %}
+  <tr><td colspan="7" class="muted">None.</td></tr>
+  {% endfor %}
+</table></div>
+
+<h2>Invoices on Hold</h2>
+<div class="table-wrap"><table>
+  <tr><th>Vendor</th><th>Project</th><th>Invoice</th><th class="n">Amount</th><th>Received</th></tr>
+  {% for p in holds %}
+  <tr><td>{% if p.subcontract_id %}<a href="/subs/{{ p.subcontract_id }}">{{ p.vendor.name if p.vendor else p.vendor_parsed }}</a>{% else %}{{ p.vendor_parsed }}{% endif %}</td>
+    <td>{{ p.project_number }}</td><td>{{ p.invoice_no or '' }}</td><td class="n">{{ p.amount|money }}</td><td class="small">{{ p.date_received|fdate }}</td></tr>
+  {% else %}
+  <tr><td colspan="5" class="muted">None.</td></tr>
+  {% endfor %}
+</table></div>
+{% endblock %}

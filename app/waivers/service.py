@@ -169,6 +169,9 @@ def attach_template_and_render(db: Session, w: Waiver, actor: str) -> None:
         log_event(db, w, actor, "unblocked", WaiverStatus.DRAFT.value, note=f"template {t.key}")
     for kind in ("statutory_form_missing", "template_missing"):
         upsert_review(db, kind, "waiver", w.id, None, "", False)
+    if w.status == WaiverStatus.DRAFT:
+        from app.mail import outbound
+        outbound.queue_waiver_request(db, w)
 
 
 def waiver_dir() -> Path:
@@ -187,6 +190,8 @@ def render_pdf(db: Session, w: Waiver, actor: str, today: date | None = None) ->
     path.write_bytes(data)
     w.generated_pdf_path = str(path)
     log_event(db, w, actor, "pdf_generated", version=w.pdf_version, template=t.key)
+    from app.mail import outbound
+    outbound.refresh_draft_attachments(db, w)
     return path
 
 
@@ -276,6 +281,10 @@ def void(db: Session, w: Waiver, actor: str, reason: str) -> None:
     if w.status == WaiverStatus.VOID:
         return
     log_event(db, w, actor, "voided", WaiverStatus.VOID.value, note=reason)
+    from app.db.models import EmailMessage
+    for e in db.scalars(select(EmailMessage).where(EmailMessage.waiver_id == w.id,
+                                                   EmailMessage.status.in_(("draft", "queued")))):
+        e.status = "discarded"
     audit(db, actor, "waiver.voided", "waiver", w.id, reason=reason)
     for kind in ("statutory_form_missing", "template_missing", "final_exceptions"):
         upsert_review(db, kind, "waiver", w.id, None, "", False)
@@ -325,3 +334,37 @@ def reprocess_payable(db: Session, p: Payable, actor: str) -> None:
         handle_event(db, ev, p)
     refresh_payable_reviews(db)
     audit(db, actor, "payable.reprocessed", "payable", p.source_row_id)
+
+
+def reject_and_reply(db: Session, w: Waiver, actor: str, reason: str):
+    """Reject a returned copy and draft the "needs correction" reply in the same thread."""
+    from app.db.models import EmailMessage
+    from app.mail import outbound
+
+    reject(db, w, actor, reason)
+    original = db.scalar(select(EmailMessage).where(EmailMessage.waiver_id == w.id, EmailMessage.direction == "in",
+                                                    EmailMessage.found_in.is_(None))
+                         .order_by(EmailMessage.id.desc())) or outbound.thread_root(db, w)
+    if original is None:
+        return None
+    e = outbound.draft_reply(db, original, "correction", values={"reason": reason}, actor=actor)
+    outbound.maybe_auto_send(db, e)
+    return e
+
+
+def accept_and_ack(db: Session, w: Waiver, actor: str, note: str = ""):
+    """Accept, and if the optional "received" reply is turned on, draft it."""
+    from app.db.models import EmailMessage
+    from app.mail import outbound
+
+    accept(db, w, actor, note)
+    if not get_setting(db, "send_received_reply"):
+        return None
+    original = db.scalar(select(EmailMessage).where(EmailMessage.waiver_id == w.id, EmailMessage.direction == "in",
+                                                    EmailMessage.found_in.is_(None))
+                         .order_by(EmailMessage.id.desc()))
+    if original is None:
+        return None
+    e = outbound.draft_reply(db, original, "received", actor=actor)
+    outbound.maybe_auto_send(db, e)
+    return e

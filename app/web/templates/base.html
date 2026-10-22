@@ -17,6 +17,8 @@
     <a href="/projects" class="{{ 'on' if path.startswith('/projects') }}">Projects</a>
     <a href="/jobs" class="{{ 'on' if path.startswith('/jobs') or path.startswith('/subs') }}">Jobs</a>
     <a href="/waivers" class="{{ 'on' if path.startswith('/waivers') }}">Waivers</a>
+    {% set ob = outbox_count() %}
+    <a href="/email" class="{{ 'on' if path.startswith('/email') }}">Email{% if ob %} <span class="badge new">{{ ob }}</span>{% endif %}</a>
     <a href="/queues" class="{{ 'on' if path.startswith('/queues') }}">Queues</a>
     <a href="/sync-runs" class="{{ 'on' if path.startswith('/sync-runs') }}">Sync log</a>
     <a href="/settings" class="{{ 'on' if path.startswith('/settings') }}">Settings</a>
@@ -24,6 +26,12 @@
   <div class="who">{{ user.email }} · {{ user.role }} · <a href="/logout">Sign out</a></div>
   {% endif %}
 </header>
+{% if user %}{% for m in mail_banner() %}
+<div style="background:#b42318;color:#fff;padding:8px 20px;font-weight:600">
+  Reconnect {{ m }}. Emails from it are paused and will go out once it's reconnected.
+  {% if user.role == 'Admin' %}<a style="color:#fff;text-decoration:underline" href="/settings/mailboxes">Reconnect now</a>{% endif %}
+</div>
+{% endfor %}{% endif %}
 <main>
 {% block content %}{% endblock %}
 </main>

@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}Mailboxes{% endblock %}
+{% block content %}
+{% set admin = user.role == 'Admin' %}
+<p class="small"><a href="/settings">← Settings</a></p>
+<h1>Mailboxes</h1>
+<p class="sub">Connecting a mailbox is just a Google sign-in <strong>as that mailbox</strong>. The <strong>Sender</strong> sends and receives all waiver and supplier email.
+A <strong>read-only source</strong> is only read (for contact logging and waivers sent there by mistake); the app never sends from it or changes anything in it.</p>
+{% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
+
+{% if admin %}
+<div class="panel row-actions">
+  <a class="btn primary" href="/settings/mailboxes/connect?role=sender&login_hint=contracts@buildoutpros.com">Connect a Google mailbox as Sender</a>
+  <a class="btn" href="/settings/mailboxes/connect?role=readonly">Connect a read-only source</a>
+  <span class="small muted">Google will ask you to pick an account: choose the mailbox itself (e.g. contracts@), not your own, unless it's your own mailbox you're connecting.</span>
+</div>
+{% endif %}
+
+{% for mb in boxes %}
+<div class="panel">
+  <div class="row-actions" style="justify-content:space-between">
+    <div><strong>{{ mb.email }}</strong>
+      {% if mb.role == 'sender' %}<span class="badge ok">Sender</span>
+      {% elif mb.role == 'listening' %}<span class="badge warn">Listening</span>
+      {% elif mb.role == 'readonly' %}<span class="badge">Read-only source</span>{% endif %}
+      {% if mb.status == 'broken' %}<span class="badge bad">Needs reconnecting</span>{% else %}<span class="badge ok">Connected</span>{% endif %}
+    </div>
+    <div class="small muted">Connected {{ mb.connected_at|fdate }} by {{ mb.connected_by or '' }} · last checked {{ mb.last_polled_at|fdate or 'never' }}</div>
+  </div>
+  {% if mb.status == 'broken' %}<div class="warnbox">{{ mb.last_error or 'Google stopped accepting the sign-in.' }}
+    {% if admin %}<a href="/settings/mailboxes/connect?role={{ 'readonly' if mb.role == 'readonly' else 'sender' }}&login_hint={{ mb.email }}">Reconnect</a>{% endif %}</div>{% endif %}
+  {% if mb.role == 'listening' %}<div class="warnbox">This was the Sender. It keeps reading replies on threads it started.
+    {% if listening_done.get(mb.id) %}All its threads are closed, so you can disconnect it.{% endif %}</div>{% endif %}
+
+  {% if admin %}
+  <form method="post" action="/settings/mailboxes/{{ mb.id }}" style="margin-top:10px">
+    <div class="grid2">
+      <div>
+        {% if mb.role != 'readonly' %}
+        <label class="small muted">Display name (what subs see in From)</label><br>
+        <input name="display_name" value="{{ mb.display_name or '' }}" style="width:100%"><br>
+        <label class="small muted">Signature (a real person's name works best)</label><br>
+        <textarea name="signature" rows="4" style="width:100%">{{ mb.signature or '' }}</textarea>
+        {% else %}
+        <label class="small muted">Only read mail addressed to (leave blank for all mail)</label><br>
+        <input name="only_to" value="{{ mb.only_to or '' }}" placeholder="ap@buildoutpros.com" style="width:100%">
+        <div class="small muted">Use this when ap@ mail is forwarded to a person's mailbox, so their other mail is ignored.</div>
+        <label class="small muted">Tag for mail found here</label><br>
+        <input name="found_in_label" value="{{ mb.found_in_label or '' }}" placeholder="{{ mb.label }}" style="width:100%">
+        {% endif %}
+      </div>
+      <div class="row-actions" style="align-items:flex-start;flex-direction:column">
+        <button class="btn" name="action" value="save">Save</button>
+        {% if mb.role != 'sender' %}
+          {% if has_send(mb) %}<button class="btn" name="action" value="make_sender">Make this the Sender</button>
+          {% else %}<a class="btn" href="/settings/mailboxes/connect?role=sender&login_hint={{ mb.email }}">Upgrade to Sender (sign in again)</a>{% endif %}
+        {% endif %}
+        <button class="btn danger" name="action" value="disconnect" onclick="return confirm('Disconnect {{ mb.email }} and revoke the app\'s access?')">Disconnect</button>
+      </div>
+    </div>
+  </form>
+  {% endif %}
+</div>
+{% else %}
+<div class="panel muted">No mailboxes connected yet.</div>
+{% endfor %}
+
+<div class="panel" id="overrides">
+  <h2 style="margin-top:0">Per-project sender (optional)</h2>
+  <p class="small muted">A job can send from a PM's or coordinator's mailbox instead of the Sender. Connect that mailbox as a Sender first, then switch the Sender back; it stays available here.</p>
+  <div class="table-wrap"><table>
+    <tr><th>Project</th><th>Sends from</th></tr>
+    {% for p in projects %}
+    <tr><td>{{ p.number }} <span class="muted small">{{ p.name or '' }}</span></td>
+      <td>{% if admin %}<form class="inline" method="post" action="/projects/{{ p.number }}/sender">
+        <select name="mailbox_id" onchange="this.form.submit()"><option value="">The Sender</option>
+          {% for mb in boxes if mb.can_send %}<option value="{{ mb.id }}" {{ 'selected' if p.sender_mailbox_id == mb.id }}>{{ mb.email }}</option>{% endfor %}</select></form>
+      {% else %}{{ 'The Sender' if not p.sender_mailbox_id else p.sender_mailbox_id }}{% endif %}</td></tr>
+    {% endfor %}
+  </table></div>
+</div>
+{% endblock %}

@@ -15,7 +15,7 @@ from app.db.models import SyncRun
 from app.db.session import SessionLocal
 from app.jobs import scheduler
 from app.logs import configure_logging
-from app.web import routes, waiver_routes
+from app.web import email_routes, routes, waiver_routes
 from app.web.templating import templates
 
 log = structlog.get_logger()
@@ -38,6 +38,7 @@ def create_app() -> FastAPI:
     app.include_router(auth.router)
     app.include_router(routes.router)
     app.include_router(waiver_routes.router)
+    app.include_router(email_routes.router)
 
     @app.exception_handler(auth.NotAuthenticated)
     async def _not_auth(request: Request, _exc):

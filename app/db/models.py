@@ -66,6 +66,10 @@ class Project(Base):
     status: Mapped[str | None] = mapped_column(String(100))
     pm_name: Mapped[str | None] = mapped_column(String(255))
     pm_email: Mapped[str | None] = mapped_column(String(255))
+    estimator_name: Mapped[str | None] = mapped_column(String(255))
+    estimator_email: Mapped[str | None] = mapped_column(String(255))
+    # Optional per-project sending mailbox; empty means the active Sender.
+    sender_mailbox_id: Mapped[int | None] = mapped_column(ForeignKey("mailboxes.id"))
     contract_amount: Mapped[Decimal | None] = mapped_column(Money)
     source_sheet: Mapped[str] = mapped_column(String(20), default="INTAKE")  # INTAKE / Archived
     source_row_id: Mapped[int | None] = mapped_column(BigInteger)
@@ -105,6 +109,8 @@ class Vendor(Base):
     billing_email: Mapped[str | None] = mapped_column(String(255))
     billing_phone: Mapped[str | None] = mapped_column(String(100))
     address: Mapped[str | None] = mapped_column(String(500))
+    last_bounce_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_bounce_address: Mapped[str | None] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     aliases: Mapped[list[VendorAlias]] = relationship(back_populates="vendor")
@@ -391,6 +397,11 @@ class Waiver(Base):
     received_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     reviewer_email: Mapped[str | None] = mapped_column(String(255))
+    # Result of the AI check of the returned copy (advisory; a person accepts or rejects).
+    verification: Mapped[dict | None] = mapped_column(JSON)
+    reminder_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_reminder_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    escalated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     payable: Mapped[Payable] = relationship()
     subcontract: Mapped[Subcontract] = relationship()
@@ -416,3 +427,124 @@ class WaiverEvent(Base):
     details: Mapped[dict | None] = mapped_column(JSON)
 
     waiver: Mapped[Waiver] = relationship(back_populates="events")
+
+
+class Mailbox(Base):
+    """A connected Google mailbox. Exactly one is the active Sender. Read-only sources are
+    never modified. A former Sender becomes "listening" until its open threads close."""
+
+    __tablename__ = "mailboxes"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email: Mapped[str] = mapped_column(String(255), unique=True)
+    provider: Mapped[str] = mapped_column(String(20), default="gmail")
+    role: Mapped[str] = mapped_column(String(20))  # sender / listening / readonly
+    status: Mapped[str] = mapped_column(String(20), default="connected")  # connected / broken / disconnected
+    display_name: Mapped[str | None] = mapped_column(String(255))
+    signature: Mapped[str | None] = mapped_column(Text)
+    # Read-only sources: only look at mail addressed to this address (e.g. ap@ forwarded to a person).
+    only_to: Mapped[str | None] = mapped_column(String(255))
+    found_in_label: Mapped[str | None] = mapped_column(String(100))
+    scopes: Mapped[str | None] = mapped_column(Text)
+    refresh_token_enc: Mapped[str | None] = mapped_column(Text)
+    history_id: Mapped[str | None] = mapped_column(String(50))
+    label_id: Mapped[str | None] = mapped_column(String(100))
+    last_polled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(Text)
+    connected_by: Mapped[str | None] = mapped_column(String(255))
+    connected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    @property
+    def can_send(self) -> bool:
+        return self.role in ("sender", "listening") and self.status == "connected"
+
+    @property
+    def label(self) -> str:
+        """How mail found here is tagged, e.g. "ap@" when ap@ mail is forwarded to a person."""
+        return self.found_in_label or (self.only_to or self.email).split("@")[0] + "@"
+
+
+class EmailMessage(Base):
+    """Every email the app writes or reads. Outbound drafts wait in the Outbox until a
+    person sends them (or the type is set to auto-send). History is in email_events."""
+
+    __tablename__ = "emails"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    mailbox_id: Mapped[int | None] = mapped_column(ForeignKey("mailboxes.id"))
+    direction: Mapped[str] = mapped_column(String(5))  # out / in
+    # waiver_request / reminder_1 / reminder_2 / escalation / correction / received / free / inbound
+    kind: Mapped[str] = mapped_column(String(30))
+    # draft / queued / sent / failed / discarded / bounced / received
+    status: Mapped[str] = mapped_column(String(20))
+    waiver_id: Mapped[int | None] = mapped_column(ForeignKey("waivers.id"))
+    project_number: Mapped[str | None] = mapped_column(String(20))
+    vendor_id: Mapped[int | None] = mapped_column(ForeignKey("vendors.id"))
+    reply_to_email_id: Mapped[int | None] = mapped_column(ForeignKey("emails.id"))
+    provider_message_id: Mapped[str | None] = mapped_column(String(100), index=True)
+    provider_thread_id: Mapped[str | None] = mapped_column(String(100), index=True)
+    rfc_message_id: Mapped[str | None] = mapped_column(String(500))
+    in_reply_to: Mapped[str | None] = mapped_column(String(500))
+    references: Mapped[str | None] = mapped_column(Text)
+    from_addr: Mapped[str | None] = mapped_column(String(255))
+    from_name: Mapped[str | None] = mapped_column(String(255))
+    to_addrs: Mapped[list | None] = mapped_column(JSON)
+    cc_addrs: Mapped[list | None] = mapped_column(JSON)
+    subject: Mapped[str | None] = mapped_column(String(1000))
+    body_text: Mapped[str | None] = mapped_column(Text)
+    token: Mapped[str | None] = mapped_column(String(30))  # LW-123
+    match_method: Mapped[str | None] = mapped_column(String(30))  # thread / token / sender / manual
+    found_in: Mapped[str | None] = mapped_column(String(100))  # e.g. "ap@" for mail found in a read-only box
+    is_auto_reply: Mapped[bool] = mapped_column(Boolean, default=False)
+    error: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[str | None] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    received_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    mailbox: Mapped[Mailbox | None] = relationship()
+    waiver: Mapped[Waiver | None] = relationship()
+    vendor: Mapped[Vendor | None] = relationship()
+    attachments: Mapped[list[EmailAttachment]] = relationship(back_populates="email", order_by="EmailAttachment.id")
+
+
+class EmailAttachment(Base):
+    __tablename__ = "email_attachments"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email_id: Mapped[int] = mapped_column(ForeignKey("emails.id"))
+    filename: Mapped[str] = mapped_column(String(500))
+    content_type: Mapped[str | None] = mapped_column(String(100))
+    size: Mapped[int | None] = mapped_column(Integer)
+    path: Mapped[str] = mapped_column(String(1000))
+
+    email: Mapped[EmailMessage] = relationship(back_populates="attachments")
+
+    @property
+    def is_pdf(self) -> bool:
+        return (self.content_type or "").lower() == "application/pdf" or self.filename.lower().endswith(".pdf")
+
+    @property
+    def is_image(self) -> bool:
+        return (self.content_type or "").lower().startswith("image/")
+
+
+class EmailEvent(Base):
+    """Append-only history for an email."""
+
+    __tablename__ = "email_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email_id: Mapped[int] = mapped_column(ForeignKey("emails.id"))
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    actor: Mapped[str] = mapped_column(String(255))
+    action: Mapped[str] = mapped_column(String(50))
+    details: Mapped[dict | None] = mapped_column(JSON)
+
+
+class EmailUserState(Base):
+    """Read / handled status per user (mirrored to Gmail only for Lien Waivers threads)."""
+
+    __tablename__ = "email_user_state"
+    __table_args__ = (UniqueConstraint("email_id", "user_id"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email_id: Mapped[int] = mapped_column(ForeignKey("emails.id"))
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    handled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

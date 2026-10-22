@@ -37,3 +37,44 @@ def fdate(v) -> str:
 
 
 templates.env.filters.update(money=money, pct=pct, fdate=fdate)
+
+
+def _mail_banner() -> list[str]:
+    """Mailboxes whose sign-in stopped working, for the red banner on every page."""
+    from app.db.session import SessionLocal
+    from app.mail.mailboxes import broken_mailboxes
+
+    db = SessionLocal()
+    try:
+        return [m.email for m in broken_mailboxes(db)]
+    except Exception:
+        return []
+    finally:
+        db.close()
+
+
+def _outbox_count() -> int:
+    from sqlalchemy import func, select
+
+    from app.db.models import EmailMessage
+    from app.db.session import SessionLocal
+
+    db = SessionLocal()
+    try:
+        return db.scalar(select(func.count(EmailMessage.id)).where(
+            EmailMessage.direction == "out", EmailMessage.status.in_(("draft", "queued", "failed")))) or 0
+    except Exception:
+        return 0
+    finally:
+        db.close()
+
+
+def _kind_labels():
+    from app.mail.outbound import KIND_LABELS
+    return KIND_LABELS
+
+
+from app.waivers.types import WaiverType  # noqa: E402
+
+templates.env.globals.update(mail_banner=_mail_banner, outbox_count=_outbox_count, KIND_LABELS=_kind_labels(),
+                             WaiverType=WaiverType)

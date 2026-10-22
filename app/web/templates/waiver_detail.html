@@ -45,6 +45,8 @@
       {% endif %}
       <div class="row-actions" style="margin-top:10px">
         <form class="inline" method="post" action="/waivers/{{ w.id }}/regenerate"><button class="btn">Regenerate PDF</button></form>
+        {% set req = emails|selectattr('kind', 'equalto', 'waiver_request')|selectattr('status', 'in', ['draft', 'queued', 'failed'])|first %}
+        {% if req %}<a class="btn primary" href="/email/{{ req.id }}/edit">Review and send the request</a>{% endif %}
         {% if w.status == 'draft' %}<form class="inline" method="post" action="/waivers/{{ w.id }}/mark-sent"><button class="btn">Mark sent (sent outside the app)</button></form>{% endif %}
       </div>
     {% endif %}
@@ -57,14 +59,17 @@
   {% endif %}
   {% if w.status == 'received' and (editor or (user.role == 'PM' and (sc.project.pm_email or '')|lower == user.email)) %}
     {% if not editor %}<div class="panel">{% endif %}
+    {% include "partials/verification.html" %}
     <div class="row-actions" style="margin-top:10px">
       <form class="inline" method="post" action="/waivers/{{ w.id }}/accept"><button class="btn primary">Accept</button></form>
       <form class="inline" method="post" action="/waivers/{{ w.id }}/reject">
-        <select name="reason">{% for r in reasons %}<option>{{ r }}</option>{% endfor %}</select>
-        <button class="btn danger">Reject</button>
+        {% set suggested = (w.verification or {}).get('problems') or [] %}
+        <select name="reason">{% for r in reasons %}<option {{ 'selected' if suggested and suggested[0] == r }}>{{ r }}</option>{% endfor %}</select>
+        <input name="custom_reason" placeholder="or type a reason" size="22">
+        <button class="btn danger">Reject and draft reply</button>
       </form>
     </div>
-    <p class="small muted">Check it's signed{% if notary_required %}, notarized{% endif %}, and has the right type, amount, through date and project.</p>
+    <p class="small muted">Check it's signed{% if notary_required %}, notarized{% endif %}, and has the right type, amount, through date and project. Rejecting puts a "please correct" reply in the Outbox, in the same thread.</p>
     {% if not editor %}</div>{% endif %}
   {% endif %}
   {% if editor %}
@@ -75,6 +80,22 @@
     {% endif %}
   </div>
   {% endif %}
+
+  <div class="panel">
+    <h2 style="margin-top:0">Emails</h2>
+    {% for e in emails %}
+      <div class="small" style="padding:4px 0;border-bottom:1px solid var(--line)">
+        <a href="/email/{{ e.id }}">{{ '→' if e.direction == 'out' else '←' }} {{ KIND_LABELS.get(e.kind, e.kind) if e.direction == 'out' else (e.from_name or e.from_addr) }}</a>
+        · <span class="badge {{ 'new' if e.status == 'draft' else ('bad' if e.status in ('failed', 'bounced') else '') }}">{{ e.status }}</span>
+        {% if e.found_in %}<span class="badge warn">Found in {{ e.found_in }}</span>{% endif %}
+        · {{ (e.sent_at or e.received_at or e.created_at)|fdate }}
+        {% if e.attachments %} · {{ e.attachments|length }} attachment{{ 's' if e.attachments|length != 1 }}{% endif %}
+      </div>
+    {% else %}
+      <p class="muted small">No emails yet.</p>
+    {% endfor %}
+    {% if editor %}<p style="margin-top:8px"><a class="btn sm" href="/email-new?waiver_id={{ w.id }}">New email about this waiver</a></p>{% endif %}
+  </div>
 
   <div class="panel">
     <h2 style="margin-top:0">History</h2>

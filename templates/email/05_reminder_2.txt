@@ -1,0 +1,9 @@
+Hi {first_name},
+
+We still don't have the signed lien waiver for {project_name}.
+[if missing_supplier_waivers] We're also missing supplier waivers from {missing_supplier_names}.
+[if gate] Your next payment is on hold until we get it.
+Can you send it over this week?
+
+Thanks,
+{signature}

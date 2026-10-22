@@ -26,3 +26,20 @@ def sync_now(trigger: str = "schedule", backfill_projects: set[str] | None = Non
         with session_scope() as db:
             run = run_sync(db, src, trigger=trigger, backfill_projects=backfill_projects)
             return run.id
+
+
+def mail_now() -> dict:
+    """Check every connected mailbox and retry queued sends."""
+    from app.mail import inbound
+
+    with job_lock("mail"):
+        with session_scope() as db:
+            return inbound.poll_all(db)
+
+
+def reminders_now() -> dict:
+    from app.mail import reminders
+
+    with job_lock("reminders"):
+        with session_scope() as db:
+            return reminders.run(db)

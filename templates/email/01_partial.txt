@@ -1,0 +1,12 @@
+Subject: Lien waiver – {project_name} – {amount} [LW-{id}]
+
+Hi {first_name},
+
+We paid invoice {invoice_no} for {project_name} on {paid_date} ({amount}). The lien waiver for that payment, through {through_date}, is attached.
+
+Please sign it, get it notarized, and reply with the signed copy.
+[if suppliers] Please also send signed lien waivers from your suppliers on this job, through the same date: {supplier_names}.
+[if gate] We need it back before we can release your next payment.
+
+Thanks,
+{signature}

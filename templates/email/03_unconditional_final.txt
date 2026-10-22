@@ -1,0 +1,11 @@
+Subject: Final lien waiver – {project_name} [LW-{id}]
+
+Hi {first_name},
+
+Final payment for {project_name} went out on {paid_date}. The unconditional final lien waiver is attached.
+
+Please sign it, get it notarized, and send it back so we can close out the job.
+[if suppliers] We also need unconditional final lien waivers from your suppliers on this job: {supplier_names}.
+
+Thanks,
+{signature}

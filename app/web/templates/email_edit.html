@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Draft{% endblock %}
+{% block content %}
+{% set editor = user.role in ('Admin', 'AP') %}
+<p class="small"><a href="/email?view=outbox">← Outbox</a></p>
+<h1>{{ KIND_LABELS.get(e.kind, e.kind) }}{% if e.waiver_id %} · <a href="/waivers/{{ e.waiver_id }}">waiver #{{ e.waiver_id }}</a>{% endif %}</h1>
+<p class="sub">{{ e.status|capitalize }}.
+  {% if e.provider_thread_id %}Reply in the existing thread, from {{ e.mailbox.email if e.mailbox else 'the thread\'s mailbox' }}.{% endif %}</p>
+{% if msg %}<div class="{{ 'flash' if msg == 'Saved' else 'warnbox' }}">{{ msg }}</div>{% endif %}
+{% if e.error %}<div class="warnbox">{{ e.error }}</div>{% endif %}
+{% for p in problems %}<div class="warnbox">Wording: {{ p }}</div>{% endfor %}
+
+<form method="post" action="/email/{{ e.id }}/edit" class="panel">
+  <dl class="kv" style="grid-template-columns: 70px 1fr">
+    <dt>From</dt><dd>
+      {% if e.provider_thread_id %}{{ e.mailbox.email if e.mailbox else '' }}
+      {% else %}<select name="mailbox_id">{% for b in boxes %}<option value="{{ b.id }}" {{ 'selected' if b.id == e.mailbox_id }}>{{ b.display_name or '' }} &lt;{{ b.email }}&gt;{% if b.role == 'listening' %} (former Sender){% endif %}</option>{% else %}<option value="">No mailbox connected</option>{% endfor %}</select>{% endif %}</dd>
+    <dt>To</dt><dd><input name="to" value="{{ (e.to_addrs or [])|join(', ') }}" style="width:100%" {{ 'disabled' if not editor }}></dd>
+    <dt>Cc</dt><dd><input name="cc" value="{{ (e.cc_addrs or [])|join(', ') }}" style="width:100%" {{ 'disabled' if not editor }}></dd>
+    <dt>Subject</dt><dd><input name="subject" value="{{ e.subject or '' }}" style="width:100%" {{ 'disabled' if not editor }}></dd>
+  </dl>
+  <textarea name="body" rows="16" style="width:100%;margin-top:10px;font:inherit" {{ 'disabled' if not editor }}>{{ e.body_text or '' }}</textarea>
+  <div style="margin-top:8px">
+    {% for a in e.attachments %}
+      <div class="small"><a href="/email/attachment/{{ a.id }}" target="_blank">📎 {{ a.filename }}</a>
+        {% if editor %}<label class="muted"><input type="checkbox" name="remove_attachment" value="{{ a.id }}"> remove</label>{% endif %}</div>
+    {% else %}<div class="small muted">No attachments.</div>{% endfor %}
+  </div>
+  {% if editor %}
+  <div class="row-actions" style="margin-top:12px">
+    <button class="btn primary" name="action" value="send">Send</button>
+    <button class="btn" name="action" value="save">Save draft</button>
+    <button class="btn danger" name="action" value="discard" onclick="return confirm('Discard this draft?')">Discard</button>
+  </div>
+  {% endif %}
+</form>
+
+{% if original %}
+<div class="panel">
+  <h2 style="margin-top:0">Replying to</h2>
+  <div class="small muted">{{ original.from_name or original.from_addr }} · {{ (original.received_at or original.sent_at)|fdate }}</div>
+  <pre style="white-space:pre-wrap;font:inherit">{{ (original.body_text or '')[:2000] }}</pre>
+</div>
+{% endif %}
+{% endblock %}

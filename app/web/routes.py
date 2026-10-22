@@ -64,6 +64,8 @@ def queue_counts(db: Session) -> dict[str, int]:
             ChangeOrder.project_number.in_(tracked))) or 0,
         "review": db.scalar(select(func.count(ReviewItem.id)).where(
             ReviewItem.status == "open", ReviewItem.project_number.in_(tracked))) or 0,
+        "verify": db.scalar(select(func.count(Waiver.id)).join(Subcontract).join(Project).where(
+            Project.is_tracked.is_(True), Waiver.status == "received")) or 0,
     }
 
 
@@ -227,9 +229,16 @@ def queues(request: Request, db: Session = Depends(get_db), user: User = Depends
                                                                 Subcontract.deleted_in_source.is_(False))):
         subs_by_project.setdefault(sc.project.number, []).append(sc)
     projects = {p.number: p for p in db.scalars(select(Project).where(Project.is_tracked.is_(True)))}
+    to_verify = db.scalars(select(Waiver).join(Subcontract).join(Project).where(
+        Project.is_tracked.is_(True), Waiver.status == "received").order_by(Waiver.received_at)).all()
+    from app.db.models import EmailMessage
+    unmatched_mail = db.scalars(select(EmailMessage).where(
+        EmailMessage.direction == "in", EmailMessage.waiver_id.is_(None), EmailMessage.kind == "inbound")
+        .order_by(EmailMessage.id.desc()).limit(100)).all()
     pids = [r.ref_id for r in reviews if r.ref_type == "payable"]
     payable_subs = {p.id: p.subcontract_id for p in db.scalars(select(Payable).where(Payable.id.in_(pids)))} if pids else {}
-    return render(request, "queues.html", user, payable_subs=payable_subs, unmatched=unmatched, unmatched_cos=unmatched_cos, reviews=reviews,
+    return render(request, "queues.html", user, to_verify=to_verify, unmatched_mail=unmatched_mail,
+                  payable_subs=payable_subs, unmatched=unmatched, unmatched_cos=unmatched_cos, reviews=reviews,
                   vendors=vendors, subs_by_project=subs_by_project, projects=projects, counts=queue_counts(db))
 
 

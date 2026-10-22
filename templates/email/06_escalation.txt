@@ -1,0 +1,8 @@
+Subject: Waiver still out – {vendor} – {project_name}
+
+{pm_first_name},
+
+{vendor} hasn't sent back the {waiver_type} for {project_name} ({amount}). We asked on {requested_date} and followed up twice.
+[if gate] Their payment is on hold.
+
+Their billing contact is {billing_name}, {billing_email}, {billing_phone}. Can you give them a call?

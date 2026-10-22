@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Email settings{% endblock %}
+{% block content %}
+{% set admin = user.role == 'Admin' %}
+<p class="small"><a href="/settings">← Settings</a></p>
+<h1>Email templates and sending</h1>
+<p class="sub">Emails are fixed templates with merge fields; nothing is written by AI. Write like a busy AP person: short, plain, one ask.
+Banned phrases, em dashes, exclamation points, bold and emojis are refused when you save.</p>
+{% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
+
+<div class="panel">
+  <h2 style="margin-top:0">Review before send</h2>
+  <p class="small muted">Every email waits in the Outbox for a person to send it. Tick a type to let it go out on its own once you trust it.</p>
+  <form method="post" action="/settings/email/sending">
+    {% for k in kinds %}
+      <label style="display:block"><input type="checkbox" name="auto_{{ k }}" {{ 'checked' if auto_send.get(k) }} {{ 'disabled' if not admin }}> Auto-send: {{ KIND_LABELS.get(k, k) }}</label>
+    {% endfor %}
+    <label style="display:block;margin-top:8px"><input type="checkbox" name="received" {{ 'checked' if received }} {{ 'disabled' if not admin }}> Send a short "Got it, thanks" reply when a waiver is accepted</label>
+    {% if admin %}<button class="btn" style="margin-top:8px">Save</button>{% endif %}
+  </form>
+</div>
+
+<div class="panel small">
+  <strong>Merge fields:</strong> {first_name} {project_name} {amount} {invoice_no} {paid_date} {through_date} {exceptions} {signature} {vendor} {waiver_type} {requested_date} {billing_name} {billing_email} {billing_phone} {pm_first_name} {reason} {id}.
+  <strong>Conditional lines:</strong> start a line with [if gate], [if suppliers], [if exceptions] or [if missing_supplier_waivers].
+  A sentence whose field is empty is left out. Payment gating is warn-only, so [if gate] lines never appear.
+</div>
+
+{% for r in rows %}
+<div class="panel" id="{{ r.key }}">
+  <h2 style="margin-top:0">{{ r.label }} {% if r.custom %}<span class="badge new">edited</span>{% endif %}</h2>
+  {% for p in r.problems %}<div class="warnbox">{{ p }}</div>{% endfor %}
+  <form method="post" action="/settings/email/template/{{ r.key }}">
+    <textarea name="text" rows="{{ r.text.count('\n') + 2 }}" style="width:100%;font-family:ui-monospace,monospace;font-size:13px" {{ 'disabled' if not admin }}>{{ r.text }}</textarea>
+    {% if admin %}<div class="row-actions"><button class="btn">Save</button>{% if r.custom %}<button class="btn" name="reset" value="1">Reset to default</button>{% endif %}</div>{% endif %}
+  </form>
+</div>
+{% endfor %}
+{% endblock %}

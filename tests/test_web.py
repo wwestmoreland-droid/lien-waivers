@@ -137,3 +137,53 @@ def test_waiver_pages_and_actions(client, db, source):
 def test_conditional_partial_flag_needs_template(client, db):
     r = client.post("/settings/flags", data={"conditional_partial": "on"}, follow_redirects=False)
     assert "Add%20a%20conditional%20partial%20template" in r.headers["location"]
+
+
+def test_email_pages(client, db, source):
+    from app.db.models import EmailMessage
+    from app.mail import mailboxes
+    from app.mail.fake import FakeMailProvider
+    from app.mail.provider import InAttachment
+
+    FakeMailProvider.reset()
+    mailboxes.set_provider_factory(lambda mb: FakeMailProvider(mb.email))
+    try:
+        sync_runner.sync_now("test")
+        client.post(f"/projects/{PROJECT}/track")
+        mailboxes.connect(db, "contracts@buildoutpros.com", "sender", "tok", "gmail.modify gmail.send", "admin")
+        db.commit()
+        for path in ("/email", "/email?view=outbox", "/email?view=sent", "/settings/mailboxes", "/settings/email",
+                     "/digest", "/queues", "/email/all"):
+            assert client.get(path).status_code == 200, path
+
+        source.row("ar_ap", 1003).values["paid_date"] = "2026-10-22"
+        sync_runner.sync_now("test")
+        draft = db.scalar(select(EmailMessage).where(EmailMessage.kind == "waiver_request"))
+        r = client.get(f"/email/{draft.id}/edit")
+        assert r.status_code == 200 and "LW-" in r.text
+        r = client.post(f"/email/{draft.id}/edit", data={"to": "ap@deltafire.com", "cc": "", "subject": draft.subject,
+                                                         "body": draft.body_text, "action": "send"},
+                        follow_redirects=False)
+        assert r.status_code == 303 and "sent=1" in r.headers["location"]
+        db.expire_all()
+        draft = db.get(EmailMessage, draft.id)
+        assert draft.status == "sent"
+
+        box = FakeMailProvider.boxes["contracts@buildoutpros.com"]
+        box.deliver(from_addr="ap@deltafire.com", subject="Re: " + draft.subject, thread_id=draft.provider_thread_id,
+                    attachments=[InAttachment("signed.pdf", "application/pdf", b"%PDF-1.4 x")])
+        sync_runner.mail_now()
+        reply = db.scalar(select(EmailMessage).where(EmailMessage.direction == "in"))
+        r = client.get(f"/email/{reply.id}")
+        assert r.status_code == 200 and "signed.pdf" in r.text
+        assert client.get(f"/email/attachment/{reply.attachments[0].id}").content.startswith(b"%PDF")
+        assert "Verification (1)" in client.get("/queues").text
+        r = client.post(f"/waivers/{draft.waiver_id}/reject", data={"reason": "it isn't signed", "custom_reason": ""})
+        assert r.status_code == 200
+        assert db.scalar(select(EmailMessage).where(EmailMessage.kind == "correction")).status == "draft"
+
+        r = client.post("/settings/email/template/partial", data={"text": "Hi,\n\nKindly sign — thanks!\n"},
+                        follow_redirects=False)
+        assert "Not%20saved" in r.headers["location"]
+    finally:
+        mailboxes.set_provider_factory(None)

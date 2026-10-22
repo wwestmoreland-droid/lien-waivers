@@ -3,9 +3,38 @@
 {% block content %}
 <h1>Queues</h1>
 <p class="sub">Rows the app couldn't place on its own. Nothing here is skipped; it waits until someone maps it.
-Verification, Unmatched inbox and New contacts queues come in Phases 3 and 4.
+The New contacts queue comes in Phase 4.
 The retention check is cleared by marking the right invoice as the retention invoice on the sub's page.</p>
 {% set editor = user.role in ('Admin', 'AP') %}
+
+<h2 id="verify">Verification ({{ to_verify|length }})</h2>
+<p class="small muted">Signed waivers that came back. Open each one, look at the copy, then Accept or Reject. Rejecting drafts a "please correct" reply.</p>
+<div class="table-wrap"><table>
+  <tr><th>Waiver</th><th>Sub</th><th>Project</th><th>Type</th><th class="n">Amount</th><th>Received</th><th>Automatic check</th></tr>
+  {% for w in to_verify %}
+  {% set v = w.verification or {} %}
+  <tr><td><a href="/waivers/{{ w.id }}">#{{ w.id }}</a></td><td>{{ w.subcontract.vendor.name }}</td><td style="white-space:nowrap">{{ w.subcontract.project.number }}</td>
+    <td>{{ WaiverType(w.type).label }}</td><td class="n">{{ w.amount|money }}</td><td class="small">{{ w.received_at|fdate }}</td>
+    <td class="small">{% if v.status == 'looks_good' %}<span class="badge ok">looks right</span>
+      {% elif v.status == 'issues' %}<span class="badge bad">{{ v.problems|join('; ') }}</span>
+      {% else %}<span class="badge">{{ v.reason or 'not checked' }}</span>{% endif %}</td></tr>
+  {% else %}
+  <tr><td colspan="7" class="muted">Nothing to verify.</td></tr>
+  {% endfor %}
+</table></div>
+
+<h2 id="mail">Unmatched inbox ({{ unmatched_mail|length }})</h2>
+<p class="small muted">Waiver-related email the app couldn't tie to one waiver. Open it and link it.</p>
+<div class="table-wrap"><table>
+  <tr><th>From</th><th>Subject</th><th>Attachments</th><th>Received</th></tr>
+  {% for e in unmatched_mail %}
+  <tr><td>{{ e.from_name or e.from_addr }}{% if e.vendor %}<div class="small muted">{{ e.vendor.name }}</div>{% endif %}</td>
+    <td><a href="/email/{{ e.id }}">{{ e.subject or '(no subject)' }}</a>{% if e.found_in %} <span class="badge warn">Found in {{ e.found_in }}</span>{% endif %}{% if e.is_auto_reply %} <span class="badge">auto-reply</span>{% endif %}</td>
+    <td class="small">{{ e.attachments|length or '' }}</td><td class="small">{{ e.received_at|fdate }}</td></tr>
+  {% else %}
+  <tr><td colspan="4" class="muted">Nothing unmatched.</td></tr>
+  {% endfor %}
+</table></div>
 
 <h2 id="ap">Unmatched AP rows ({{ unmatched|length }})</h2>
 <p class="small muted">Map the vendor once and the spelling is saved as an alias for every future row. Use "Direct purchase" for vendors billed without a subcontract on purpose (no waiver is requested for those).</p>

@@ -1,0 +1,22 @@
+{% set v = w.verification or {} %}
+{% if v %}
+<div class="{{ 'flash' if v.status == 'looks_good' else 'warnbox' }}" style="margin-top:8px">
+  <strong>Automatic check:</strong>
+  {% if v.status == 'looks_good' %}looks right.
+  {% elif v.status == 'issues' %}found {{ v.problems|length }} problem{{ 's' if v.problems|length != 1 }}: {{ v.problems|join('; ') }}.
+  {% else %}{{ v.reason }}{% endif %}
+  {% if v.found %}
+  <div class="small" style="margin-top:4px">
+    On the form: {{ (v.found.waiver_type or '')|replace('_', ' ') }}
+    · amount {{ v.found.amount or '—' }}
+    {% if v.found.through_date %}· through {{ v.found.through_date }}{% endif %}
+    · {{ 'signed' if v.found.appears_signed else 'not signed' }}
+    · notary {{ 'completed' if v.found.notary_completed else 'blank' }}
+    {% if v.found.signer_company %}· signed by {{ v.found.signer_company }}{% endif %}
+    {% if v.found.is_supplier_waiver %}· <strong>looks like a supplier's waiver, not the sub's</strong>{% endif %}
+    {% if v.found.issues %}<br>Notes: {{ v.found.issues|join('; ') }}{% endif %}
+  </div>
+  {% endif %}
+  <div class="small muted">This check is a guide. You decide.</div>
+</div>
+{% endif %}

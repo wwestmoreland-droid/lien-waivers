@@ -4,18 +4,21 @@ from __future__ import annotations
 
 import structlog
 from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from app.config import get_settings
 from app.db.session import session_scope
 from app.services.locks import JobAlreadyRunning
 from app.services.settings_store import get_setting
-from app.services.sync_runner import sync_now
+from app.services.sync_runner import mail_now, reminders_now, sync_now
 
 log = structlog.get_logger()
 
 _scheduler: BackgroundScheduler | None = None
 SYNC_JOB_ID = "smartsheet_sync"
+MAIL_JOB_ID = "mail_poll"
+REMINDER_JOB_ID = "daily_reminders"
 
 
 def _scheduled_sync() -> None:
@@ -25,6 +28,15 @@ def _scheduled_sync() -> None:
         log.info("sync.skipped_already_running")
     except Exception:
         log.exception("sync.scheduled_failed")
+
+
+def _guarded(name: str, fn) -> None:
+    try:
+        fn()
+    except JobAlreadyRunning:
+        log.info(f"{name}.skipped_already_running")
+    except Exception:
+        log.exception(f"{name}.failed")
 
 
 def current_interval_minutes() -> int:
@@ -39,6 +51,11 @@ def start() -> None:
     _scheduler = BackgroundScheduler(timezone=get_settings().timezone)
     _scheduler.add_job(_scheduled_sync, IntervalTrigger(minutes=current_interval_minutes()), id=SYNC_JOB_ID,
                        max_instances=1, coalesce=True, replace_existing=True)
+    _scheduler.add_job(lambda: _guarded("mail", mail_now), IntervalTrigger(minutes=current_interval_minutes()),
+                       id=MAIL_JOB_ID, max_instances=1, coalesce=True, replace_existing=True)
+    # Reminders and escalations once a day, so subs don't get them at odd hours.
+    _scheduler.add_job(lambda: _guarded("reminders", reminders_now), CronTrigger(hour=8, minute=0),
+                       id=REMINDER_JOB_ID, max_instances=1, coalesce=True, replace_existing=True)
     _scheduler.start()
     log.info("scheduler.started", interval=current_interval_minutes())
 
@@ -46,6 +63,7 @@ def start() -> None:
 def reschedule(minutes: int) -> None:
     if _scheduler:
         _scheduler.reschedule_job(SYNC_JOB_ID, trigger=IntervalTrigger(minutes=minutes))
+        _scheduler.reschedule_job(MAIL_JOB_ID, trigger=IntervalTrigger(minutes=minutes))
 
 
 def shutdown() -> None:

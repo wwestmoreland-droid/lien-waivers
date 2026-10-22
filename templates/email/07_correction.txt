@@ -1,0 +1,6 @@
+Hi {first_name},
+
+Thanks for sending this. We can't accept it yet because {reason}. Can you fix that and send it back?
+
+Thanks,
+{signature}
