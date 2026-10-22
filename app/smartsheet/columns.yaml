@@ -1,0 +1,97 @@
+# Smartsheet sheet and column IDs. The app matches columns by ID only; titles are for people.
+# If a column is deleted or recreated in Smartsheet, sync stops with an error naming the
+# missing ID, and the new ID goes here.
+
+sheets:
+  ar_ap:
+    id: 3567565348857732
+    columns:
+      project_number: 1912704702670724        # Project / Opportunity Number
+      project_name: 7542204236883844          # Project / Opportunity
+      invoice_no: 5326107226099588            # Invoice #
+      contractor_client: 3815506077083524     # Contractor / Client (formula; hyphen-broken, info only)
+      vendor_and_project: 5922760208633732    # Client / Contractor & Project (picklist)
+      amount: 3540442412803972                # Amount
+      contract_value_cos: 322766150520708     # Contract Value & Change Orders (info only)
+      total_billed: 4826365777891204          # Total Billed (info only; not point-in-time)
+      cost_to_complete: 5776844187979652      # Cost to Complete (info only)
+      receivables_payables: 6416304330041220  # Receivables / Payables
+      date_received: 4164504516355972         # Date Received
+      payment_terms: 8319105704454020         # Payment Terms (days)
+      due_date: 8668104143726468              # Due Date
+      paid_date: 505329819117444              # Paid Date
+      entered_in_qb: 2189677360533380         # Entered in QB
+      approval: 4934336601974660              # Approved / Rejected
+      approval_date: 7186136415659908         # Approved / Rejected Date
+      approved_by: 2682536788289412           # Approved / Rejected By
+      cost_code: 1556636881446788             # Cost Code
+      material_sub_other: 1853394640654212    # Material / Sub / Other (hidden)
+      waiver_created: 1044766578659204        # Waiver Created (read only here; never written)
+
+  subcontracts:
+    id: 3219292807974788
+    columns:
+      contractor_name: 4821868302212
+      cost_code: 3206362541543300
+      supplier_contractor: 7709962168913796   # Labor / Material / Labor & Material
+      project: 4834401728810884               # 14-char project number
+      project_name: 2582601915125636
+      address: 5837131734798212
+      estimator_name: 3586694600150916
+      estimator_email: 771944833044356
+      pm_name: 3708501821968260               # sub's Project Manager Contact Name
+      pm_email: 2240989440724868
+      foreman_name: 3366889347567492
+      foreman_email: 6744589068095364
+      foreman_phone: 7870488974937988
+      billing_name: 7056856842194820
+      billing_email: 2553257214824324
+      billing_phone: 4805057028509572
+      payment_terms: 6979102358589316
+      contract_amount: 5256614193876868
+      insurance_exp: 3147681141575556
+      partial_waiver_amount: 2649602374193028
+      final_waiver: 4901402187878276
+      bp_pm_responsible: 8636422293507972
+      superintendent_responsible: 473647968898948
+      state: 7459799703965572
+      z_function_1: 875321017716612
+
+  intake:
+    id: 7138606339909508
+    columns:
+      project_number: 6843097503033220
+      project_name: 5577114377316228
+      project_status: 3321277638305668
+      project_manager: 4451214470473604
+      owner: 6703014284158852
+      state: 7590627970967428                 # Project Address: State
+      complete_address: 1314541142337412
+      client_company: 2805553366886276
+      contract_amount: 7350749154830212
+
+  archived:
+    id: 973787383523204
+    columns:
+      project_number: 1220495048763268
+      project_name: 5724094676133764
+      project_status: 3472294862448516
+      project_manager: 6287044629555076
+      state: 4738932257646468
+      complete_address: 3613032350803844
+      client_company: 798282583697284
+      contract_amount: 7791583255914372
+
+  change_orders:
+    id: 1986207697293188
+    columns:
+      subcontractor: 2222880418910084         # formula; hyphen-broken, info only
+      project_number: 5522559575478148
+      description: 8900259296006020
+      internal_external: 7722758780702596
+      cost_from_sub: 2355966087483268
+      requested_total: 1230066180640644
+      approval: 3481865994325892              # Internal Reviewer Assignee Approval
+      contractor_and_project: 2147554978123652
+      total_cost: 1338581274283908
+      created: 4185553436102532

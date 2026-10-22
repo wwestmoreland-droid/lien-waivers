@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Sync log{% endblock %}
+{% block content %}
+<div class="row-actions" style="justify-content: space-between">
+  <div><h1>Sync log</h1><p class="sub">Every Smartsheet sync, newest first. The last 100 are shown.</p></div>
+  {% with running=false, message="", last_sync=runs[0] if runs else none, next_sync=none %}{% include "partials/sync_status.html" %}{% endwith %}
+</div>
+<div class="table-wrap"><table>
+  <tr><th>#</th><th>Trigger</th><th>Started</th><th>Took</th><th>Status</th><th>Rows read</th><th>Changes</th><th>Errors</th></tr>
+  {% for r in runs %}
+  <tr>
+    <td>{{ r.id }}</td><td>{{ r.trigger }}</td><td class="small">{{ r.started_at|fdate }}</td>
+    <td class="small">{% if r.finished_at %}{{ ((r.finished_at - r.started_at).total_seconds())|round(1) }}s{% endif %}</td>
+    <td><span class="badge {{ 'ok' if r.status == 'ok' else ('bad' if r.status == 'error' else 'warn') }}">{{ r.status }}</span></td>
+    <td class="small">{% for k, v in (r.rows_read or {}).items() %}{{ k }} {{ v }}{{ ', ' if not loop.last }}{% endfor %}</td>
+    <td class="small">{% for k, v in (r.stats or {}).items() if v %}{{ k|replace('_', ' ') }} {{ v }}{{ ', ' if not loop.last }}{% endfor %}</td>
+    <td class="small" style="color:var(--bad)">{{ (r.errors or [])|join('; ') }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="8" class="muted">No syncs yet.</td></tr>
+  {% endfor %}
+</table></div>
+{% endblock %}

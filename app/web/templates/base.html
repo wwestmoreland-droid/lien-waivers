@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Lien Waivers{% endblock %} · Buildout Pros</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/htmx.min.js"></script>
+</head>
+<body>
+<header class="top">
+  <div class="brand">Buildout Pros · Lien Waivers</div>
+  {% if user %}
+  {% set path = request.url.path %}
+  <nav>
+    <a href="/" class="{{ 'on' if path == '/' }}">Dashboard</a>
+    <a href="/projects" class="{{ 'on' if path.startswith('/projects') }}">Projects</a>
+    <a href="/jobs" class="{{ 'on' if path.startswith('/jobs') or path.startswith('/subs') }}">Jobs</a>
+    <a href="/queues" class="{{ 'on' if path.startswith('/queues') }}">Queues</a>
+    <a href="/sync-runs" class="{{ 'on' if path.startswith('/sync-runs') }}">Sync log</a>
+    <a href="/settings" class="{{ 'on' if path.startswith('/settings') }}">Settings</a>
+  </nav>
+  <div class="who">{{ user.email }} · {{ user.role }} · <a href="/logout">Sign out</a></div>
+  {% endif %}
+</header>
+<main>
+{% block content %}{% endblock %}
+</main>
+</body>
+</html>

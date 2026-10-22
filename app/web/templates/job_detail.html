@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}{{ p.number }}{% endblock %}
+{% block content %}
+<div class="row-actions" style="justify-content: space-between">
+  <div>
+    <h1>{{ p.name or p.number }}</h1>
+    <p class="sub">{{ p.number }} · {{ p.client_company or 'No client' }} · {{ p.state or '' }} · {{ p.status or '' }}{% if p.pm_name %} · PM {{ p.pm_name }}{% endif %}<br>
+    {{ p.address or '' }}</p>
+  </div>
+  <div class="row-actions"><a class="btn" href="/reports/ctc.csv?project={{ p.number }}">CSV</a><a class="btn" href="/reports/ctc.xlsx?project={{ p.number }}">XLSX</a></div>
+</div>
+{% if not p.is_tracked %}<div class="warnbox">This project is not tracked. Data shown is from when it was.</div>{% endif %}
+
+{% with show_project=false %}{% include "partials/ctc_rows.html" %}{% endwith %}
+
+{% if unmatched %}
+<h2>Unmatched payables on this job</h2>
+<p class="small muted">These don't count toward any sub's CTC until they're mapped on the <a href="/queues#ap">Queues</a> page.</p>
+<div class="table-wrap"><table>
+  <tr><th>Vendor (as entered)</th><th>Invoice</th><th class="n">Amount</th><th>Received</th><th>Status</th><th>Problem</th></tr>
+  {% for u in unmatched %}
+  <tr><td>{{ u.vendor_parsed }}</td><td>{{ u.invoice_no or '' }}</td><td class="n">{{ u.amount|money }}</td><td>{{ u.date_received|fdate }}</td><td>{{ u.approval_status or '' }}</td><td><span class="badge warn">{{ u.match_status|replace('_', ' ') }}</span></td></tr>
+  {% endfor %}
+</table></div>
+{% endif %}
+
+{% if direct %}
+<h2>Direct purchases (no subcontract, no waiver)</h2>
+<div class="table-wrap"><table>
+  <tr><th>Vendor</th><th>Invoice</th><th class="n">Amount</th><th>Received</th><th>Status</th><th>Paid</th></tr>
+  {% for u in direct %}
+  <tr><td>{{ u.vendor.name if u.vendor else u.vendor_parsed }}</td><td>{{ u.invoice_no or '' }}</td><td class="n">{{ u.amount|money }}</td><td>{{ u.date_received|fdate }}</td><td>{{ u.approval_status or '' }}</td><td>{{ u.paid_date|fdate }}</td></tr>
+  {% endfor %}
+</table></div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}Queues{% endblock %}
+{% block content %}
+<h1>Queues</h1>
+<p class="sub">Rows the app couldn't place on its own. Nothing here is skipped; it waits until someone maps it.
+Verification, Unmatched inbox and New contacts queues come in Phases 3 and 4.</p>
+{% set editor = user.role in ('Admin', 'AP') %}
+
+<h2 id="ap">Unmatched AP rows ({{ unmatched|length }})</h2>
+<p class="small muted">Map the vendor once and the spelling is saved as an alias for every future row. Use "Direct purchase" for vendors billed without a subcontract on purpose (no waiver is requested for those).</p>
+<div class="table-wrap"><table>
+  <tr><th>Project</th><th>Vendor as entered</th><th>Invoice</th><th class="n">Amount</th><th>Received</th><th>Status</th><th>Problem</th><th>Fix</th></tr>
+  {% for u in unmatched %}
+  <tr>
+    <td><a href="/jobs/{{ u.project_number }}">{{ u.project_number }}</a></td>
+    <td>{{ u.vendor_parsed }}{% if u.vendor_raw != u.vendor_parsed %}<div class="small muted">{{ u.vendor_raw }}</div>{% endif %}
+      {% if u.material_sub_other %}<div class="small muted">Marked {{ u.material_sub_other }} in AR/AP</div>{% endif %}</td>
+    <td>{{ u.invoice_no or '' }}</td><td class="n">{{ u.amount|money }}</td><td>{{ u.date_received|fdate }}</td><td>{{ u.approval_status or '' }}</td>
+    <td>
+      {% if u.match_status == 'unmatched_vendor' %}<span class="badge warn">vendor not recognized</span>
+      {% elif u.match_status == 'no_subcontract' %}<span class="badge warn">no subcontract on this job</span>
+      {% elif u.match_status == 'ambiguous' %}<span class="badge warn">more than one subcontract</span>{% endif %}
+    </td>
+    <td>
+      {% if editor %}
+      <div class="row-actions">
+        {% if u.match_status == 'unmatched_vendor' %}
+        <form class="inline" method="post" action="/queues/payables/{{ u.id }}/map-vendor">
+          <select name="vendor_id" required>
+            <option value="">Same as…</option>
+            {% for c in (u.match_candidates or []) %}<option value="{{ c.vendor_id }}">{{ c.name }} ({{ c.score }}% match)</option>{% endfor %}
+            {% if u.match_candidates %}<option disabled>──────────</option>{% endif %}
+            {% for v in vendors %}<option value="{{ v.id }}">{{ v.name }}</option>{% endfor %}
+          </select>
+          <button class="btn sm primary">Map</button>
+        </form>
+        {% endif %}
+        {% if u.match_status in ('ambiguous', 'no_subcontract') and subs_by_project.get(u.project_number) %}
+        <form class="inline" method="post" action="/queues/payables/{{ u.id }}/choose-subcontract">
+          <select name="subcontract_id" required>
+            <option value="">Assign to subcontract…</option>
+            {% for sc in subs_by_project[u.project_number] %}<option value="{{ sc.id }}">{{ sc.vendor.name }} – {{ sc.original_amount|money }}{% if sc.cost_codes %} – {{ sc.cost_codes[:40] }}{% endif %}</option>{% endfor %}
+          </select>
+          <button class="btn sm">Assign</button>
+        </form>
+        {% endif %}
+        <form class="inline" method="post" action="/queues/payables/{{ u.id }}/direct-purchase">
+          <select name="scope"><option value="job">this job</option><option value="all">all jobs</option></select>
+          <button class="btn sm">Direct purchase</button>
+        </form>
+      </div>
+      {% else %}<span class="muted small">AP or Admin can fix</span>{% endif %}
+    </td>
+  </tr>
+  {% else %}
+  <tr><td colspan="8" class="muted">Nothing unmatched.</td></tr>
+  {% endfor %}
+</table></div>
+
+<h2 id="co">Unmatched Internal change orders ({{ unmatched_cos|length }})</h2>
+<div class="table-wrap"><table>
+  <tr><th>Project</th><th>Sub as entered</th><th>Description</th><th>Status</th><th class="n">Total Cost</th><th>Problem</th><th>Fix</th></tr>
+  {% for co in unmatched_cos %}
+  <tr><td style="white-space:nowrap">{{ co.project_number }}</td><td>{{ co.vendor_parsed }}</td><td>{{ co.description or '' }}</td><td>{{ co.status or '' }}</td><td class="n">{{ co.amount|money }}</td>
+    <td><span class="badge warn">{{ co.match_status|replace('_', ' ') }}</span></td>
+    <td>{% if editor and co.match_status == 'unmatched_vendor' %}
+      <form class="inline" method="post" action="/queues/change-orders/{{ co.id }}/map-vendor">
+        <select name="vendor_id" required><option value="">Same as…</option>{% for v in vendors %}<option value="{{ v.id }}">{{ v.name }}</option>{% endfor %}</select>
+        <button class="btn sm primary">Map</button></form>
+      {% elif co.match_status != 'unmatched_vendor' %}<span class="small muted">Check the sub's row in All Subcontracts for this job.</span>{% endif %}</td></tr>
+  {% else %}
+  <tr><td colspan="7" class="muted">Nothing unmatched.</td></tr>
+  {% endfor %}
+</table></div>
+
+<h2 id="review">Review ({{ reviews|length }})</h2>
+<div class="table-wrap"><table>
+  <tr><th>Kind</th><th>Project</th><th>Detail</th><th>Assigned to</th><th>Opened</th><th></th></tr>
+  {% for r in reviews %}
+  <tr><td><span class="badge {{ 'bad' if r.kind == 'over_billed' else 'warn' }}">{{ r.kind|replace('_', ' ') }}</span></td>
+    <td style="white-space:nowrap">{{ r.project_number }}</td>
+    <td>{% if r.ref_type == 'subcontract' %}<a href="/subs/{{ r.ref_id }}">{{ r.message }}</a>{% else %}{{ r.message }}{% endif %}</td>
+    <td class="small">{{ r.assignee_email or '' }}</td><td class="small">{{ r.created_at|fdate }}</td>
+    <td>{% if editor %}<div class="row-actions">
+      <form class="inline" method="post" action="/queues/review/{{ r.id }}/resolve"><input name="note" placeholder="Note (optional)" size="16"><button class="btn sm">Resolved</button></form>
+      <form class="inline" method="post" action="/queues/review/{{ r.id }}/dismiss"><button class="btn sm">Dismiss</button></form></div>{% endif %}</td></tr>
+  {% else %}
+  <tr><td colspan="6" class="muted">Nothing to review.</td></tr>
+  {% endfor %}
+</table></div>
+{% endblock %}

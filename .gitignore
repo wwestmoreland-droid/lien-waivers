@@ -1,0 +1,11 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+data/
+*.db
+*.egg-info/
+.pytest_cache/
+.coverage
+ctc*.xlsx
+ctc*.csv

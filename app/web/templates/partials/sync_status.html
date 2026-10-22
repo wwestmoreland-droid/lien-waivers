@@ -1,0 +1,14 @@
+<div id="sync-status" class="row-actions" {% if running %}hx-get="/sync/status" hx-trigger="every 3s" hx-swap="outerHTML"{% endif %}>
+  {% if user.role in ('Admin', 'AP') %}
+  <button class="btn primary" hx-post="/sync" hx-target="#sync-status" hx-swap="outerHTML" {% if running %}disabled{% endif %}>
+    {{ 'Syncing…' if running else 'Sync now' }}
+  </button>
+  {% endif %}
+  <span class="small muted">
+    {% if message %}{{ message }} · {% endif %}
+    {% if last_sync %}Last sync {{ last_sync.started_at|fdate }}
+      {% if last_sync.status == 'error' %}<span class="badge bad">failed</span>{% elif last_sync.status == 'running' %}<span class="badge warn">running</span>{% endif %}
+    {% else %}Never synced{% endif %}
+    {% if next_sync %} · next {{ next_sync|fdate }}{% endif %}
+  </span>
+</div>

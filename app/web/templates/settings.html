@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+<h1>Settings</h1>
+<p class="sub">Mailboxes, email templates, reminders and the waiver template registry are added in Phases 2 and 3.
+Smartsheet is read only: the app never writes to it.</p>
+{% set admin = user.role == 'Admin' %}
+
+<div class="panel">
+  <h2 style="margin-top:0">General</h2>
+  <form method="post" action="/settings/general" class="filters">
+    <label>Sync every <input type="number" name="interval" min="5" value="{{ interval }}" style="width:70px" {{ 'disabled' if not admin }}> minutes</label>
+    <label>Major trade over $<input type="number" name="threshold" step="0.01" value="{{ threshold }}" style="width:110px" {{ 'disabled' if not admin }}> original contract</label>
+    <label>Default reviewer <input type="email" name="reviewer" value="{{ reviewer }}" size="30" {{ 'disabled' if not admin }}></label>
+    {% if admin %}<button class="btn primary">Save</button>{% endif %}
+  </form>
+</div>
+
+<div class="panel" id="aliases">
+  <h2 style="margin-top:0">Vendor aliases ({{ aliases|length }})</h2>
+  <p class="small muted">Spellings that map to a vendor. Added from the Unmatched queue.</p>
+  <div class="table-wrap"><table>
+    <tr><th>Alias</th><th>Vendor</th><th>Added by</th><th>When</th><th></th></tr>
+    {% for a in aliases %}
+    <tr><td>{{ a.alias }}</td><td>{{ a.vendor.name }}</td><td class="small">{{ a.created_by or '' }}</td><td class="small">{{ a.created_at|fdate }}</td>
+      <td>{% if user.role in ('Admin', 'AP') %}<form class="inline" method="post" action="/settings/aliases/{{ a.id }}/delete"><button class="btn sm danger">Remove</button></form>{% endif %}</td></tr>
+    {% else %}<tr><td colspan="5" class="muted">None yet.</td></tr>{% endfor %}
+  </table></div>
+</div>
+
+<div class="panel" id="direct">
+  <h2 style="margin-top:0">Direct purchases ({{ directs|length }})</h2>
+  <p class="small muted">Vendors billed with no subcontract on purpose. Their payables don't need waivers.</p>
+  <div class="table-wrap"><table>
+    <tr><th>Vendor</th><th>Job</th><th>Added by</th><th>When</th><th></th></tr>
+    {% for d in directs %}
+    <tr><td>{{ vendors[d.vendor_id].name }}</td><td>{{ d.project_number or 'All jobs' }}</td><td class="small">{{ d.created_by or '' }}</td><td class="small">{{ d.created_at|fdate }}</td>
+      <td>{% if user.role in ('Admin', 'AP') %}<form class="inline" method="post" action="/settings/direct/{{ d.id }}/delete"><button class="btn sm danger">Remove</button></form>{% endif %}</td></tr>
+    {% else %}<tr><td colspan="5" class="muted">None yet.</td></tr>{% endfor %}
+  </table></div>
+</div>
+
+<div class="panel" id="users">
+  <h2 style="margin-top:0">Users</h2>
+  <p class="small muted">Anyone with a @buildoutpros.com Google account can sign in. New users start as PM (read only); an Admin changes the role here.</p>
+  <div class="table-wrap"><table>
+    <tr><th>Email</th><th>Name</th><th>Role</th><th>Last sign-in</th></tr>
+    {% for u in users %}
+    <tr><td>{{ u.email }}</td><td>{{ u.name or '' }}</td>
+      <td>{% if admin and u.id != user.id %}
+        <form class="inline" method="post" action="/settings/users/{{ u.id }}/role"><select name="role" onchange="this.form.submit()">{% for r in roles %}<option {{ 'selected' if r == u.role }}>{{ r }}</option>{% endfor %}</select></form>
+        {% else %}{{ u.role }}{% endif %}</td>
+      <td class="small">{{ u.last_login_at|fdate }}</td></tr>
+    {% endfor %}
+  </table></div>
+</div>
+
+<div class="panel">
+  <h2 style="margin-top:0">Recent audit log</h2>
+  <div class="table-wrap"><table>
+    <tr><th>When</th><th>Who</th><th>Action</th><th>What</th><th>Details</th></tr>
+    {% for a in audit_rows %}
+    <tr><td class="small">{{ a.at|fdate }}</td><td class="small">{{ a.actor }}</td><td>{{ a.action }}</td><td class="small">{{ a.entity_type or '' }} {{ a.entity_id or '' }}</td><td class="small muted">{{ a.details or '' }}</td></tr>
+    {% else %}<tr><td colspan="5" class="muted">Empty.</td></tr>{% endfor %}
+  </table></div>
+</div>
+{% endblock %}

@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Jobs{% endblock %}
+{% block content %}
+<div class="row-actions" style="justify-content: space-between">
+  <div><h1>Cost to complete</h1>
+  <p class="sub">Computed by the app from approved payables and approved Internal change orders. Hold and Rejected rows are not billed.</p></div>
+  <div class="row-actions"><a class="btn" href="/reports/ctc.csv">CSV</a><a class="btn" href="/reports/ctc.xlsx">XLSX</a></div>
+</div>
+
+<div class="tabs">
+  <a href="/jobs?by=job" class="{{ 'on' if by == 'job' }}">By job</a>
+  <a href="/jobs?by=sub" class="{{ 'on' if by == 'sub' }}">By sub</a>
+  <a href="/jobs?by=pm" class="{{ 'on' if by == 'pm' }}">By PM</a>
+</div>
+
+<div class="table-wrap">
+<table>
+  <tr><th>{{ {'job': 'Project', 'sub': 'Sub', 'pm': 'PM'}[by] }}</th><th class="n">Original</th><th class="n">Approved COs</th><th class="n">Pending COs</th><th class="n">Revised contract</th><th class="n">Billed</th><th class="n">Paid</th><th class="n">Retainage held</th><th class="n">On hold</th><th class="n">CTC</th><th class="n">% complete</th><th class="n">Subcontracts</th></tr>
+  {% for g in groups %}
+  <tr>
+    <td>{% if by == 'job' %}<a href="/jobs/{{ g.key }}">{{ g.key }}</a><div class="small muted">{{ g.label }}</div>{% else %}{{ g.key }}{% endif %}</td>
+    <td class="n">{{ g.original_contract|money }}</td><td class="n">{{ g.approved_cos|money }}</td><td class="n">{{ g.pending_cos|money }}</td>
+    <td class="n">{{ g.revised_contract|money }}</td><td class="n">{{ g.billed|money }}</td><td class="n">{{ g.paid|money }}</td>
+    <td class="n">{{ g.retainage_held|money }}</td><td class="n">{{ g.hold|money }}</td><td class="n">{{ g.ctc|money }}</td>
+    <td class="n">{{ g.pct_complete|pct }}</td><td class="n">{{ g.count }}{% if g.over_billed %} <span class="badge bad">{{ g.over_billed }} over</span>{% endif %}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="12" class="muted">Nothing tracked yet.</td></tr>
+  {% endfor %}
+</table>
+</div>
+
+{% if by != 'job' %}
+<h2>Detail</h2>
+{% include "partials/ctc_rows.html" %}
+{% endif %}
+{% endblock %}

@@ -1,0 +1,29 @@
+<tr id="proj-{{ p.id }}">
+  <td style="white-space:nowrap">{% if p.is_tracked %}<a href="/jobs/{{ p.number }}">{{ p.number }}</a>{% else %}{{ p.number }}{% endif %}</td>
+  <td>{{ p.name or '' }}</td>
+  <td>{{ p.client_company or '' }}</td>
+  <td>{{ p.state or '' }}</td>
+  <td class="small">{{ p.status or '' }}{% if p.source_sheet == 'Archived' %} <span class="badge">Archived</span>{% endif %}</td>
+  <td>{{ p.pm_name or '' }}</td>
+  <td class="n">{{ p.sub_count }}</td>
+  <td class="n">{{ p.sub_total|money }}</td>
+  <td>
+    {% set lbl = label(p) %}
+    <span class="badge {{ 'ok' if lbl == 'Tracked' else ('warn' if p.is_tracked else ('new' if lbl.startswith('New') else '')) }}">{{ lbl }}</span>
+    {% if user.role in ('Admin', 'AP') %}
+      {% if p.is_tracked %}
+        {% if confirm_untrack %}
+        <div class="warnbox">{{ confirm_untrack }} open item{{ 's' if confirm_untrack != 1 }} on this job. Untracking pauses all automation for it.
+          <form class="inline" hx-post="/projects/{{ p.number }}/untrack" hx-target="#proj-{{ p.id }}" hx-swap="outerHTML">
+            <input type="hidden" name="confirm" value="yes"><button class="btn sm danger">Untrack anyway</button></form>
+        </div>
+        {% else %}
+        <button class="btn sm" hx-post="/projects/{{ p.number }}/untrack" hx-target="#proj-{{ p.id }}" hx-swap="outerHTML">Untrack</button>
+        {% endif %}
+      {% else %}
+        <button class="btn sm primary" hx-post="/projects/{{ p.number }}/track" hx-target="#proj-{{ p.id }}" hx-swap="outerHTML">Track</button>
+      {% endif %}
+    {% endif %}
+    {% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
+  </td>
+</tr>

@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}{{ sc.vendor.name }}{% endblock %}
+{% block content %}
+<h1>{{ sc.vendor.name }}</h1>
+<p class="sub"><a href="/jobs/{{ sc.project.number }}">{{ sc.project.number }} · {{ sc.project.name }}</a>
+  · {{ sc.supplier_contractor or 'type not set' }} · {{ sc.payment_terms or 'terms not set' }}
+  {% if sc.deleted_in_source %}<span class="badge bad">removed from Smartsheet</span>{% endif %}</p>
+
+{% for r in reviews if r.status == 'open' %}<div class="warnbox">{{ r.message }}</div>{% endfor %}
+
+<div class="cards">
+  <div class="card"><div class="k">Revised contract</div><div class="v">{{ ctc.revised_contract|money }}</div><div class="small muted">{{ ctc.original_contract|money }} + {{ ctc.approved_cos|money }} COs</div></div>
+  <div class="card"><div class="k">Billed</div><div class="v">{{ ctc.billed_to_date|money }}</div></div>
+  <div class="card"><div class="k">Paid</div><div class="v">{{ ctc.paid_to_date|money }}</div></div>
+  <div class="card {{ 'alert' if ctc.status == 'over_billed' }}"><div class="k">Cost to complete</div><div class="v">{{ ctc.cost_to_complete|money }}</div><div class="small muted">{{ ctc.pct_complete|pct }} complete</div></div>
+  <div class="card"><div class="k">Pending COs (not included)</div><div class="v">{{ ctc.pending_cos|money }}</div></div>
+  <div class="card"><div class="k">On hold</div><div class="v">{{ ctc.hold_total|money }}</div></div>
+  {% if ctc.retention_owed is not none %}<div class="card"><div class="k">Retention still to bill</div><div class="v">{{ ctc.retention_owed|money }}</div><div class="small muted">{{ ctc.retention_billed|money }} billed</div></div>{% endif %}
+</div>
+
+<div class="grid2">
+<div class="panel">
+  <h2 style="margin-top:0">Contacts (from All Subcontracts)</h2>
+  <dl class="kv">
+    <dt>Billing</dt><dd>{{ sc.billing_name or '' }} {{ sc.billing_email or '—' }} {{ sc.billing_phone or '' }}</dd>
+    <dt>Sub PM</dt><dd>{{ sc.pm_name or '' }} {{ sc.pm_email or '—' }}</dd>
+    <dt>Estimator</dt><dd>{{ sc.estimator_name or '' }} {{ sc.estimator_email or '—' }}</dd>
+    <dt>Foreman</dt><dd>{{ sc.foreman_name or '' }} {{ sc.foreman_email or '—' }} {{ sc.foreman_phone or '' }}</dd>
+    <dt>Our PM</dt><dd>{{ sc.bp_pm_responsible or '—' }}</dd>
+    <dt>Retainage</dt><dd>{{ sc.retainage_pct ~ '%' if sc.retainage_pct else 'none' }}</dd>
+    <dt>Smartsheet final waiver</dt><dd>{{ sc.final_waiver_status_source or '—' }}</dd>
+  </dl>
+</div>
+<div class="panel">
+  <h2 style="margin-top:0">CTC trend</h2>
+  {% if snaps|length > 1 %}
+    {% set maxv = (snaps|map(attribute='revised_contract')|max) or 1 %}
+    {% set w = 560 %}{% set h = 120 %}
+    <svg class="spark" viewBox="0 0 {{ w }} {{ h }}" width="100%" height="{{ h }}" role="img" aria-label="Cost to complete over time">
+      <polyline fill="none" stroke="#1f5fbf" stroke-width="2" points="{% for s in snaps %}{{ (loop.index0 / (snaps|length - 1) * (w - 10) + 5)|round(1) }},{{ (h - 5 - ([s.cost_to_complete, 0]|max / maxv * (h - 10)))|round(1) }} {% endfor %}"/>
+    </svg>
+    <div class="small muted">{{ snaps[0].snapshot_date|fdate }} {{ snaps[0].cost_to_complete|money }} → {{ snaps[-1].snapshot_date|fdate }} {{ snaps[-1].cost_to_complete|money }}</div>
+  {% else %}
+    <p class="muted">One point per day of sync. The trend shows once there are two days of history.</p>
+  {% endif %}
+</div>
+</div>
+
+<h2>Payables (in waiver order: date received, then row)</h2>
+<p class="small muted">"CTC after" is the point-in-time figure the waiver decision uses. It counts only this row and the ones before it.</p>
+<div class="table-wrap"><table>
+  <tr><th>Invoice</th><th class="n">Amount</th><th>Received</th><th>Status</th><th>Paid</th><th class="n">Billed after</th><th class="n">CTC after</th><th>Retention invoice</th><th>Events</th></tr>
+  {% for p, c in timeline %}
+  <tr>
+    <td>{{ p.invoice_no or '' }}</td><td class="n">{{ p.amount|money }}</td><td>{{ p.date_received|fdate }}</td>
+    <td>{% set s = (p.approval_status or '')|lower %}<span class="badge {{ 'ok' if s == 'approved' else ('warn' if s == 'hold' else ('bad' if s == 'rejected' else '')) }}">{{ p.approval_status or 'Pending' }}</span></td>
+    <td>{{ p.paid_date|fdate }}</td>
+    <td class="n">{{ c.billed_to_date|money if s == 'approved' else '' }}</td>
+    <td class="n">{{ c.cost_to_complete|money if s == 'approved' else '' }}</td>
+    <td>
+      {% if user.role in ('Admin', 'AP') %}
+      <form class="inline" method="post" action="/payables/{{ p.id }}/retention">
+        <select name="value" onchange="this.form.submit()">
+          <option value="auto" {{ 'selected' if p.is_retention_override is none }}>Auto ({{ 'yes' if p.is_retention_auto else 'no' }})</option>
+          <option value="yes" {{ 'selected' if p.is_retention_override == true }}>Yes</option>
+          <option value="no" {{ 'selected' if p.is_retention_override == false }}>No</option>
+        </select>
+      </form>
+      {% else %}{{ 'Yes' if p.is_retention_invoice else 'No' }}{% endif %}
+    </td>
+    <td class="small">{% for e in events.get(p.id, []) %}<span class="badge">{{ e.kind }}{{ ' (history)' if e.from_backfill }}</span> {% endfor %}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="9" class="muted">No payables yet.</td></tr>
+  {% endfor %}
+</table></div>
+
+<h2>Change orders (Internal)</h2>
+<div class="table-wrap"><table>
+  <tr><th>CO key</th><th>Description</th><th>Status</th><th class="n">Total Cost</th><th class="n">Cost From Sub</th><th>Created</th></tr>
+  {% for co in cos %}
+  <tr><td class="small">{{ co.source_row_id }}</td><td>{{ co.description or '' }}</td>
+    <td><span class="badge {{ 'ok' if (co.status or '')|lower == 'approved' else ('warn' if (co.status or '')|lower == 'pending' else '') }}">{{ co.status or '' }}</span></td>
+    <td class="n">{{ co.amount|money }}</td>
+    <td class="n">{{ co.cost_from_sub|money }}{% if co.amount_mismatch %} <span class="badge warn">differs</span>{% endif %}</td>
+    <td>{{ co.created_in_source|fdate }}</td></tr>
+  {% else %}
+  <tr><td colspan="6" class="muted">No change orders.</td></tr>
+  {% endfor %}
+</table></div>
+{% endblock %}

@@ -1,0 +1,20 @@
+{% set status_badge = {'ok': '', 'complete': 'ok', 'over_billed': 'bad', 'no_contract': 'warn'} %}
+<div class="table-wrap">
+<table>
+  <tr><th>Sub</th>{% if show_project is not defined or show_project %}<th>Project</th>{% endif %}<th class="n">Revised contract</th><th class="n">Pending COs</th><th class="n">Billed</th><th class="n">Paid</th><th class="n">Retainage held</th><th class="n">On hold</th><th class="n">CTC</th><th class="n">% complete</th><th>Status</th><th>Open waivers</th><th>Last waiver received</th></tr>
+  {% for r in rows %}
+  <tr>
+    <td><a href="/subs/{{ r.subcontract_id }}">{{ r.vendor }}</a></td>
+    {% if show_project is not defined or show_project %}<td><a href="/jobs/{{ r.project_number }}">{{ r.project_number }}</a></td>{% endif %}
+    <td class="n">{{ r.revised_contract|money }}</td><td class="n">{{ r.pending_cos|money }}</td><td class="n">{{ r.billed|money }}</td>
+    <td class="n">{{ r.paid|money }}</td><td class="n">{{ r.retainage_held|money }}</td><td class="n">{{ r.hold|money }}</td>
+    <td class="n">{{ r.ctc|money }}</td><td class="n">{{ r.pct_complete|pct }}</td>
+    <td><span class="badge {{ status_badge.get(r.status, '') }}">{{ r.status|replace('_', ' ') }}</span></td>
+    <td class="muted small">Phase 2</td><td class="muted small">Phase 2</td>
+  </tr>
+  {% endfor %}
+  {% if totals is defined %}
+  <tr class="total"><td>Total</td><td class="n">{{ totals.revised_contract|money }}</td><td class="n">{{ totals.pending_cos|money }}</td><td class="n">{{ totals.billed|money }}</td><td class="n">{{ totals.paid|money }}</td><td class="n">{{ totals.retainage_held|money }}</td><td class="n">{{ totals.hold|money }}</td><td class="n">{{ totals.ctc|money }}</td><td></td><td></td><td></td><td></td></tr>
+  {% endif %}
+</table>
+</div>

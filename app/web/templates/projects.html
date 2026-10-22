@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Projects{% endblock %}
+{% block content %}
+<h1>Projects</h1>
+<p class="sub">Projects in status 7 Pre Construction, 8 Construction or 9 Post Construction, plus anything already tracked.
+Only tracked projects are synced, reported on, or get waivers and emails.</p>
+
+<form class="filters" method="get">
+  <input type="search" name="q" value="{{ f.q }}" placeholder="Search number, name, client">
+  <select name="state"><option value="">All states</option>{% for s in opts.states %}<option {{ 'selected' if f.state == s }}>{{ s }}</option>{% endfor %}</select>
+  <select name="client"><option value="">All clients</option>{% for c in opts.clients %}<option {{ 'selected' if f.client == c }}>{{ c }}</option>{% endfor %}</select>
+  <select name="pm"><option value="">All PMs</option>{% for p in opts.pms %}<option {{ 'selected' if f.pm == p }}>{{ p }}</option>{% endfor %}</select>
+  <button class="btn">Filter</button>
+  {% if f.q or f.state or f.client or f.pm %}<a href="/projects" class="small">Clear</a>{% endif %}
+  <span class="small muted" style="margin-left:auto">{{ projects|length }} project{{ 's' if projects|length != 1 }}{% if last_sync %} · list from sync {{ last_sync.started_at|fdate }}{% endif %}</span>
+</form>
+
+<div class="table-wrap">
+<table>
+  <tr><th>Project #</th><th>Name</th><th>Client</th><th>State</th><th>Status</th><th>PM</th><th class="n"># subs</th><th class="n">Subcontract value</th><th>Tracking</th></tr>
+  {% for p in projects %}
+    {% include "partials/project_row.html" %}
+  {% else %}
+  <tr><td colspan="9" class="muted">No projects match. If this is a fresh install, run a sync first.</td></tr>
+  {% endfor %}
+</table>
+</div>
+{% endblock %}
