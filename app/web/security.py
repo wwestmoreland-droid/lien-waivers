@@ -68,11 +68,10 @@ class SecurityMiddleware(BaseHTTPMiddleware):
 WEAK_SECRETS = {"", "dev-only-change-me", "changeme", "secret"}
 
 
-def check_production_settings(s: Settings) -> None:
-    """Refuse to start an internet-facing app with settings that would let someone in."""
-    public = s.app_base_url.startswith("https://")
-    if not public:
-        return
+def production_problems(s: Settings) -> list[str]:
+    """Settings that would let someone in on an internet-facing server."""
+    if not s.app_base_url.startswith("https://"):
+        return []
     problems = []
     if s.secret_key in WEAK_SECRETS or len(s.secret_key) < 32:
         problems.append("SECRET_KEY must be set to a long random value (at least 32 characters).")
@@ -82,5 +81,34 @@ def check_production_settings(s: Settings) -> None:
         problems.append("GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are required.")
     if s.mail_provider != "gmail":
         problems.append("MAIL_PROVIDER must be gmail on a public server.")
+    return problems
+
+
+def check_production_settings(s: Settings) -> None:
+    problems = production_problems(s)
     if problems:
-        raise RuntimeError("Unsafe configuration, not starting: " + " ".join(problems))
+        raise RuntimeError("Unsafe configuration: " + " ".join(problems))
+
+
+def locked_app(problems: list[str]):
+    """Served instead of the real app when the configuration is unsafe: nothing is reachable,
+    and the page says which setting to fix (never the values)."""
+    from fastapi import FastAPI
+    from fastapi.responses import HTMLResponse, JSONResponse
+
+    app = FastAPI(docs_url=None, redoc_url=None)
+    items = "".join(f"<li>{p}</li>" for p in problems)
+    page = ("<!doctype html><meta charset=utf-8><title>Lien Waivers: settings needed</title>"
+            "<body style='font-family:system-ui;max-width:640px;margin:60px auto;line-height:1.5'>"
+            "<h1>The app is locked until these settings are fixed</h1><ul>" + items + "</ul>"
+            "<p>Fix them in Railway → the app service → Variables. The app restarts on its own.</p></body>")
+
+    @app.get("/health")
+    def health():
+        return JSONResponse({"status": "misconfigured", "problems": problems})
+
+    @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD"])
+    def everything(path: str):
+        return HTMLResponse(page, status_code=503)
+
+    return app

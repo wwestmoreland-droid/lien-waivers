@@ -238,3 +238,15 @@ def test_unsafe_production_settings_refuse_to_start():
                 dict(google_client_id=""), dict(mail_provider="fake")):
         with _pytest.raises(RuntimeError):
             check_production_settings(Settings(**(base | bad)))
+
+
+def test_unsafe_settings_lock_the_app_instead_of_crashing():
+    from fastapi.testclient import TestClient as TC
+
+    from app.web.security import locked_app
+    c = TC(locked_app(["SECRET_KEY must be set to a long random value (at least 32 characters)."]))
+    r = c.get("/health")
+    assert r.status_code == 200 and r.json()["status"] == "misconfigured"
+    r = c.get("/email")
+    assert r.status_code == 503 and "SECRET_KEY" in r.text
+    assert c.post("/projects/x/track").status_code == 503

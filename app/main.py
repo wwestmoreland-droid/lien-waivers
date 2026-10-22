@@ -16,7 +16,7 @@ from app.db.session import SessionLocal
 from app.jobs import scheduler
 from app.logs import configure_logging
 from app.web import email_routes, routes, waiver_routes
-from app.web.security import SecurityMiddleware, check_production_settings
+from app.web.security import SecurityMiddleware, locked_app, production_problems
 from app.web.templating import templates
 
 log = structlog.get_logger()
@@ -32,7 +32,12 @@ async def lifespan(_: FastAPI):
 
 def create_app() -> FastAPI:
     s = get_settings()
-    check_production_settings(s)
+    problems = production_problems(s)
+    if problems:
+        # Don't crash-loop (that hides the reason); serve a locked page that names the setting.
+        log.error("config.unsafe", problems=problems)
+        print("UNSAFE CONFIGURATION, app locked: " + " ".join(problems), flush=True)
+        return locked_app(problems)
     app = FastAPI(title="Buildout Pros – Lien Waivers", lifespan=lifespan, docs_url=None, redoc_url=None)
     app.add_middleware(SecurityMiddleware, base_url=s.app_base_url)
     app.add_middleware(SessionMiddleware, secret_key=s.secret_key, same_site="lax",
