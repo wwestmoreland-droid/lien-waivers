@@ -6,6 +6,7 @@ Values a person changes at runtime (sync interval, thresholds, flags) live in th
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -45,6 +46,15 @@ class Settings(BaseSettings):
     # Later phases
     anthropic_api_key: str = ""
     fernet_key: str = ""
+
+    @field_validator("app_base_url")
+    @classmethod
+    def _normalize_base_url(cls, v: str) -> str:
+        """Accept "example.up.railway.app" or a trailing slash; Google needs the exact form."""
+        v = v.strip().rstrip("/")
+        if v and not v.startswith(("http://", "https://")):
+            v = "https://" + v
+        return v
 
     @property
     def admin_email_list(self) -> list[str]:
