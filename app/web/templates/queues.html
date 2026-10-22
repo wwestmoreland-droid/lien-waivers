@@ -24,7 +24,7 @@ The retention check is cleared by marking the right invoice as the retention inv
 
 {% if editor %}
 <h2 id="contacts">New contacts ({{ new_contacts|length }})</h2>
-<p class="small muted">People found in email who aren't confirmed yet, or whose details changed. Pick the vendor and role and Confirm, or Ignore. Addresses already in All Subcontracts are confirmed on their own.</p>
+<p class="small muted">Only the contacts the app couldn't be sure about. It confirms on its own when the address is in All Subcontracts, the email domain belongs only to that vendor, or their signature names the vendor exactly. Anyone who sends an invoice or pay app is marked Billing. Pick the vendor and role and Confirm, or Ignore.</p>
 <div class="table-wrap"><table>
   <tr><th>Contact</th><th>Found in signature</th><th>Last seen</th><th>Vendor and role</th></tr>
   {% for c in new_contacts %}

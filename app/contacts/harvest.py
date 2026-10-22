@@ -182,10 +182,39 @@ def match_vendor(db: Session, mb: Mailbox | None, addr: str, thread_id: str | No
     return None, None, 0
 
 
-def role_for(db: Session, addr: str, title: str | None) -> str | None:
+INVOICE_SUBJECT = re.compile(
+    r"\binv(oice)?s?\b|\binv\s*#|\bpay\s*app|\bpayment application|\bbilling\b|\bstatement\b|"
+    r"\bremittance\b|\bprogress (bill|payment)|\bG70[23]\b|\bretention (invoice|bill)", re.I)
+
+
+def sent_invoices(db: Session, c: Contact) -> bool:
+    """They sent us mail about an invoice or pay app, so they handle billing."""
+    if c.id is None:
+        return False
+    for subject in db.scalars(select(ContactMessage.subject).where(ContactMessage.contact_id == c.id,
+                                                                   ContactMessage.field == "from")):
+        if subject and INVOICE_SUBJECT.search(subject):
+            return True
+    return False
+
+
+def same_company(db: Session, c: Contact, v: Vendor) -> str | None:
+    """How we know the contact works for the vendor, or None if we don't know for sure:
+    a company email domain that belongs only to this vendor, or the company name in their
+    signature that is exactly this vendor's name (or a saved alias)."""
+    if domain_vendor(db, c.email) is v:
+        return "same-domain"
+    if c.company and resolver.find_vendor(db, c.company) is v:
+        return "company-name"
+    return None
+
+
+def role_for(db: Session, addr: str, title: str | None, contact: Contact | None = None) -> str | None:
     role = signature.guess_role(title)
     if role:
         return role
+    if contact is not None and sent_invoices(db, contact):
+        return "billing"
     for col, r in ((Subcontract.billing_email, "billing"), (Subcontract.pm_email, "pm"),
                    (Subcontract.estimator_email, "estimator"), (Subcontract.foreman_email, "foreman")):
         if db.scalar(select(Subcontract.id).where(col == addr).limit(1)):
@@ -298,27 +327,44 @@ def _apply_signature(db: Session, c: Contact, msg: Incoming, created: bool, budg
         c.previous = previous
         c.needs_review = True
     if not c.role:
-        c.role = role_for(db, c.email, c.title)
+        c.role = role_for(db, c.email, c.title, c)
 
 
 def _assign(db: Session, mb: Mailbox | None, c: Contact, thread_id: str | None, display_name: str | None) -> None:
     v, method, confidence = match_vendor(db, mb, c.email, thread_id, c.company, display_name)
     if not c.role:
-        c.role = role_for(db, c.email, c.title)
+        c.role = role_for(db, c.email, c.title, c)
     if v is None:
         return
     if c.vendor_id is None:
         c.vendor_id, c.match_method, c.confidence = v.id, method, confidence
-    if method == "exact" and c.status == "new":
-        # Rule 1: an address already on file for this vendor is confirmed automatically.
-        c.vendor_id, c.match_method, c.confidence = v.id, method, confidence
-        c.status, c.confirmed_by, c.confirmed_at = "confirmed", "system:known-email", now()
+    if c.status != "new" or c.vendor_id != v.id:
+        return
+    # Confirmed without asking only when we know it's the same company: an address already on
+    # file (rule 1), a company domain only this vendor uses, or their signature names the vendor.
+    how = "known-email" if method == "exact" else same_company(db, c, v)
+    if how:
+        c.status, c.confirmed_by, c.confirmed_at = "confirmed", f"system:{how}", now()
+        c.confidence = max(c.confidence or 0, 95)
+        if c.role == "billing":
+            _default_waiver_email(db, v, c)
+
+
+def _default_waiver_email(db: Session, v: Vendor, c: Contact) -> None:
+    """A vendor with no billing email anywhere gets this billing contact for waiver emails."""
+    if v.waiver_email or v.billing_email:
+        return
+    if db.scalar(select(Subcontract.id).where(Subcontract.vendor_id == v.id,
+                                              Subcontract.billing_email.is_not(None)).limit(1)):
+        return
+    v.waiver_email, v.waiver_email_set_by = c.email, "the app (they sent invoices; no billing email on file)"
 
 
 def rematch_unassigned(db: Session) -> int:
-    """After a contact is confirmed or vendors change, try again for contacts still unassigned."""
+    """After a contact is confirmed or vendors change, take another look at every unconfirmed
+    contact: fill in a role from what they've sent, and confirm the ones we're sure about."""
     n = 0
-    for c in db.scalars(select(Contact).where(Contact.vendor_id.is_(None), Contact.status == "new")):
+    for c in db.scalars(select(Contact).where(Contact.status == "new", Contact.is_active.is_(True))).all():
         _assign(db, None, c, None, c.name)
-        n += c.vendor_id is not None
+        n += c.status == "confirmed"
     return n

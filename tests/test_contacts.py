@@ -78,12 +78,13 @@ def test_mail_logs_contacts_by_matching_rules(mail):
 
     maria = contact(db, "maria@deltafire.com")
     assert maria.name == "Maria Lopez" and maria.vendor.name == "Delta Fire Systems, Inc"
-    assert maria.match_method == "domain" and maria.status == "new"  # needs a person to confirm
+    # Same company for sure (deltafire.com belongs only to Delta Fire), so no one has to confirm it.
+    assert maria.match_method == "domain" and maria.status == "confirmed" and maria.confirmed_by == "system:same-domain"
     assert (maria.title, maria.phone, maria.mobile, maria.role) == (
         "Accounts Receivable", "(847) 555-0142", "(312) 555-9981", "billing")
     assert maria.message_count == 1 and maria.parsed_by == "rules"
     cc = contact(db, "owner@ridgeplumbing.com")
-    assert cc.vendor.name == "Ridge Plumbing" and cc.status == "new"
+    assert cc.vendor.name == "Ridge Plumbing" and cc.status == "confirmed" and cc.role is None
     gm = contact(db, "someone@gmail.com")
     assert gm.vendor_id is None
     for skipped in ("will@buildoutpros.com", "no-reply@procore.com", "deals@supplyhouse.com",
@@ -96,6 +97,49 @@ def test_mail_logs_contacts_by_matching_rules(mail):
     inbound.poll_all(db)
     dana = contact(db, "ap@deltafire.com")
     assert dana.status == "confirmed" and dana.message_count == 1 and dana.last_seen_at
+
+
+def test_best_guess_roles_and_only_sure_matches_confirmed(mail):
+    db = mail.db
+    # Sent a pay app from the company domain, no signature: billing, confirmed.
+    mail.box.deliver(from_addr="tom@ridgeplumbing.com", from_name="Tom Reyes", subject="Pay App #3 - Palatine",
+                     body="see attached")
+    # Signature names the vendor exactly, but writes from Gmail: same company, confirmed.
+    mail.box.deliver(from_addr="ridgebooks@gmail.com", from_name="Ann Lee", subject="Invoice 5521",
+                     body="Attached.\n\nAnn Lee\nRidge Plumbing\n(312) 555-0188")
+    # Only the display name looks like the vendor, on Gmail: a guess, left for a person.
+    mail.box.deliver(from_addr="ridgeplumb@gmail.com", from_name="Ridge Plumbing Co", subject="Invoice 9",
+                     body="Attached.")
+    # A PM title wins over the invoice subject.
+    mail.box.deliver(from_addr="pm2@ridgeplumbing.com", from_name="Lou Park", subject="Invoice question",
+                     body="Q\n\nLou Park\nProject Manager\nRidge Plumbing")
+    inbound.poll_all(db)
+    tom = contact(db, "tom@ridgeplumbing.com")
+    assert (tom.role, tom.status, tom.vendor.name) == ("billing", "confirmed", "Ridge Plumbing")
+    ann = contact(db, "ridgebooks@gmail.com")
+    assert (ann.role, ann.status, ann.confirmed_by) == ("billing", "confirmed", "system:company-name")
+    guess = contact(db, "ridgeplumb@gmail.com")
+    assert guess.vendor.name == "Ridge Plumbing" and guess.status == "new" and guess.role == "billing"
+    assert contact(db, "pm2@ridgeplumbing.com").role == "pm"
+    # Ridge already has a billing email in All Subcontracts, so where waivers go doesn't change.
+    assert db.scalar(select(Vendor).where(Vendor.name == "Ridge Plumbing")).waiver_email is None
+
+
+def test_existing_unconfirmed_contacts_get_rechecked_on_sync(mail):
+    from app.smartsheet.sync import run_sync
+    db = mail.db
+    mail.box.deliver(from_addr="kim@tristateglass.com", from_name="Kim Ortiz", subject="Invoice 88", body="Attached.")
+    inbound.poll_all(db)
+    kim = contact(db, "kim@tristateglass.com")
+    assert kim.status == "new" and kim.vendor_id is None and kim.role == "billing"  # domain not known yet
+    tri = db.scalar(select(Subcontract).where(Subcontract.source_row_id == 104))
+    tri.vendor.email_domains = ["tristateglass.com"]
+    db.commit()
+    run_sync(db, mail.source, trigger="test")
+    kim = contact(db, "kim@tristateglass.com")
+    assert kim.status == "confirmed" and kim.vendor_id == tri.vendor_id
+    # Tri-State has no billing email anywhere, so their invoice sender gets the waiver emails.
+    assert service.waiver_email(db.get(Subcontract, tri.id)) == "kim@tristateglass.com"
 
 
 def test_confirm_learns_domain_and_changes_go_back_to_queue(mail):
@@ -230,21 +274,23 @@ def test_backfill_pauses_when_mailbox_breaks(mail):
 def test_contact_pages(mail):
     db = mail.db
     mail.box.deliver(from_addr="maria@deltafire.com", from_name="Maria Lopez", subject="Invoice", body=SIG)
+    mail.box.deliver(from_addr="maybe@gmail.com", from_name="Pat Q", subject="question", body="hi")
     inbound.poll_all(db)
     db.commit()
     maria = contact(db, "maria@deltafire.com")
+    maybe = contact(db, "maybe@gmail.com")
     with TestClient(create_app()) as c:
         r = c.get("/queues")
-        assert r.status_code == 200 and "maria@deltafire.com" in r.text and "New contacts (1)" in r.text
+        assert r.status_code == 200 and "maybe@gmail.com" in r.text and "New contacts (1)" in r.text
         for path in ("/contacts", "/contacts?status=review", f"/contacts/{maria.id}", "/settings/mailboxes", "/"):
             assert c.get(path).status_code == 200, path
         csv = c.get("/contacts.csv")
         assert csv.status_code == 200 and "maria@deltafire.com" in csv.text and "(312) 555-9981" in csv.text
-        r = c.post(f"/contacts/{maria.id}", data={"action": "confirm", "vendor_id": str(maria.vendor_id),
-                                                  "role": "billing", "back": "/queues#contacts"},
+        r = c.post(f"/contacts/{maybe.id}", data={"action": "confirm", "vendor_id": str(maria.vendor_id),
+                                                  "role": "pm", "back": "/queues#contacts"},
                    follow_redirects=False)
         assert r.status_code == 303 and r.headers["location"] == "/queues#contacts"
-        assert contact(db, "maria@deltafire.com").status == "confirmed"
+        assert contact(db, "maybe@gmail.com").status == "confirmed"
         sc = db.scalar(select(Subcontract).where(Subcontract.source_row_id == 101))
         r = c.get(f"/subs/{sc.id}")
         assert "Send waivers to maria@deltafire.com" in r.text
@@ -276,10 +322,8 @@ def test_look_up_vendor_in_email_from_sub_page(mail):
     with TestClient(create_app()) as c:
         r = c.post(f"/vendors/{tri.vendor_id}/lookup", data={"back": f"/subs/{tri.id}"})
         assert r.status_code == 200 and "Searched email for Tri-State Glass" in r.text
-        assert "kim@tristateglass.com" in r.text and "not confirmed" in r.text
+        assert "kim@tristateglass.com" in r.text and "gets waivers" in r.text  # sent the invoice, same domain
         assert "Add to Tri-State Glass" in r.text and "books4you@gmail.com" in r.text
-        kim = contact(db, "kim@tristateglass.com")
-        c.post(f"/vendors/{tri.vendor_id}/waiver-email", data={"contact_id": str(kim.id), "back": f"/subs/{tri.id}"})
         kim = contact(db, "kim@tristateglass.com")
         assert kim.status == "confirmed" and kim.role == "billing"
         assert service.waiver_email(db.get(Subcontract, tri.id)) == "kim@tristateglass.com"

@@ -98,6 +98,8 @@ def run_sync(db: Session, source: SheetSource, trigger: str = "schedule",
         stats["request_emails_drafted"] += outbound.ensure_request_drafts(db)
         from app.contacts import service as contacts
         stats["contacts_from_smartsheet"] = contacts.sync_from_subcontracts(db)
+        from app.contacts.harvest import rematch_unassigned
+        stats["contacts_auto_confirmed"] = rematch_unassigned(db)
 
         for number in backfill & tracked.keys():
             tracked[number].backfilled_at = now()

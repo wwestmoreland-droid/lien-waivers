@@ -66,7 +66,10 @@ The CTC engine was run on real Smartsheet rows for P--IL-102125-1 (IMAGE Studios
 ### Contacts (Phase 4a)
 - Every new message in a connected mailbox is checked for contacts: names from From, Reply-To, To and Cc; phone, mobile, title and company from the sender's signature (rules first; Claude only when the rules can't read a new or changed signature). The email body isn't kept for contacts.
 - Skipped: @buildoutpros.com, no-reply and notification addresses, bulk mail (List-Unsubscribe), calendar invites, auto-replies and bounces. For a read-only source with "only mail addressed to" set, only that mail is read.
-- Vendor match order: address already on file (auto-confirmed), the waiver thread, the company's email domain (never gmail.com and the like), the company name, else Unassigned. Everything else waits in **Queues → New contacts**.
+- Vendor match order: address already on file, the waiver thread, the company's email domain (never gmail.com and the like), the company name, else Unassigned.
+- Confirmed without asking only when it's surely the same company: address already on file, a company domain only that vendor uses, or a signature naming the vendor exactly (or a saved alias). Everything else waits in **Queues → New contacts**.
+- Role: from the signature title first; otherwise anyone who sent an invoice, pay app or statement is Billing. A vendor with no billing email anywhere gets its confirmed billing contact for waiver emails automatically.
+- Unconfirmed contacts are rechecked on every sync, so they're confirmed once the vendor's domain becomes known.
 - Contacts in All Subcontracts are added as confirmed on each sync.
 - On a sub's page, a confirmed billing contact that differs from where waivers go shows as a suggested update; one click switches waiver emails to it (Smartsheet isn't changed).
 - **Backfill**: Settings → Mailboxes → "Start tonight" reads the last 12 months, headers first, a slice per minute under Gmail's quota, 8 PM to 6 AM by default. It saves progress and resumes after a restart.
