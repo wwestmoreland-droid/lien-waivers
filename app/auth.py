@@ -58,7 +58,8 @@ def upsert_user(db: Session, email: str, name: str | None) -> User:
 def current_user(request: Request, db: Session = Depends(get_db)) -> User:
     s = get_settings()
     email = request.session.get("user_email")
-    if not email and s.dev_auth_email and not s.google_client_id:
+    # Local development only; check_production_settings refuses to start a public server with this set.
+    if not email and s.dev_auth_email and not s.google_client_id and not s.app_base_url.startswith("https://"):
         email = s.dev_auth_email.lower()
         upsert_user(db, email, "Dev user")
         request.session["user_email"] = email

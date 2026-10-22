@@ -187,3 +187,54 @@ def test_email_pages(client, db, source):
         assert "Not%20saved" in r.headers["location"]
     finally:
         mailboxes.set_provider_factory(None)
+
+
+def test_pm_role_cannot_see_email(client, db):
+    from app.db.models import User
+    client.get("/")
+    u = db.scalar(select(User))
+    u.role = "PM"
+    db.commit()
+    for path in ("/email", "/email/all", "/settings/mailboxes", "/digest", "/email/attachment/1"):
+        assert client.get(path).status_code == 403, path
+
+
+def test_attachments_never_served_as_html(client, db, tmp_path):
+    from app.db.models import EmailAttachment, EmailMessage
+    e = EmailMessage(direction="in", kind="inbound", status="received", subject="x")
+    db.add(e)
+    db.flush()
+    evil = tmp_path / "invoice.html"
+    evil.write_text("<script>alert(1)</script>")
+    pdf = tmp_path / "w.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    a1 = EmailAttachment(email_id=e.id, filename="invoice.html", content_type="text/html", path=str(evil))
+    a2 = EmailAttachment(email_id=e.id, filename="w.pdf", content_type="text/html", path=str(pdf))
+    db.add_all([a1, a2])
+    db.commit()
+    r = client.get(f"/email/attachment/{a1.id}")
+    assert r.headers["content-type"] == "application/octet-stream"
+    assert r.headers["content-disposition"].startswith("attachment")
+    assert r.headers["x-content-type-options"] == "nosniff" and "sandbox" in r.headers["content-security-policy"]
+    r = client.get(f"/email/attachment/{a2.id}")
+    assert r.headers["content-type"] == "application/pdf"  # sender's claimed type ignored
+
+
+def test_cross_site_post_refused(client):
+    r = client.post(f"/projects/{PROJECT}/track", headers={"Origin": "https://evil.example"})
+    assert r.status_code == 403
+    assert client.get("/health").headers["x-frame-options"] == "SAMEORIGIN"
+
+
+def test_unsafe_production_settings_refuse_to_start():
+    import pytest as _pytest
+
+    from app.config import Settings
+    from app.web.security import check_production_settings
+    base = dict(app_base_url="https://lien-waivers-production.up.railway.app", google_client_id="id",
+                google_client_secret="s", secret_key="x" * 64, dev_auth_email="", mail_provider="gmail")
+    check_production_settings(Settings(**base))
+    for bad in (dict(secret_key="dev-only-change-me"), dict(dev_auth_email="a@buildoutpros.com"),
+                dict(google_client_id=""), dict(mail_provider="fake")):
+        with _pytest.raises(RuntimeError):
+            check_production_settings(Settings(**(base | bad)))

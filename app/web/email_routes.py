@@ -32,10 +32,12 @@ from app.services.audit import audit
 from app.services.settings_store import get_setting, set_setting
 from app.waivers import service as waiver_service
 from app.waivers.types import OPEN_STATUSES, WaiverStatus, WaiverType
+from app.web.security import safe_file_response
 from app.web.templating import templates
 
-router = APIRouter()
 EDITORS = ("Admin", "AP")
+# Email gives access to mail in contracts@ (and ap@), so only AP and Admin can see it at all.
+router = APIRouter(dependencies=[Depends(require_role(*EDITORS))])
 
 
 def now() -> datetime:
@@ -200,8 +202,7 @@ def attachment(aid: int, db: Session = Depends(get_db), user: User = Depends(cur
     a = db.get(EmailAttachment, aid)
     if not a or not Path(a.path).exists():
         raise HTTPException(404)
-    return FileResponse(a.path, media_type=a.content_type or "application/octet-stream",
-                        headers={"Content-Disposition": f'inline; filename="{Path(a.filename).name}"'})
+    return safe_file_response(a.path, a.filename, a.content_type)
 
 
 @router.post("/email/{eid}/link")

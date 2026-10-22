@@ -16,6 +16,7 @@ from app.services.audit import audit
 from app.services.settings_store import get_setting, set_setting
 from app.waivers import pdf, service
 from app.waivers.types import WaiverStatus, WaiverType
+from app.web.security import safe_file_response
 from app.web.templating import templates
 
 router = APIRouter()
@@ -98,9 +99,7 @@ def waiver_signed(wid: int, db: Session = Depends(get_db), user: User = Depends(
     w = _waiver(db, wid)
     if not w.signed_pdf_path or not Path(w.signed_pdf_path).exists():
         raise HTTPException(404, "No signed copy yet")
-    media = "application/pdf" if w.signed_pdf_path.lower().endswith(".pdf") else "application/octet-stream"
-    return FileResponse(w.signed_pdf_path, media_type=media,
-                        headers={"Content-Disposition": f'inline; filename="{Path(w.signed_pdf_path).name}"'})
+    return safe_file_response(w.signed_pdf_path, Path(w.signed_pdf_path).name, None)
 
 
 def _act(db: Session, w: Waiver, fn, *args):

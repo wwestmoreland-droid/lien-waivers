@@ -16,6 +16,7 @@ from app.db.session import SessionLocal
 from app.jobs import scheduler
 from app.logs import configure_logging
 from app.web import email_routes, routes, waiver_routes
+from app.web.security import SecurityMiddleware, check_production_settings
 from app.web.templating import templates
 
 log = structlog.get_logger()
@@ -31,7 +32,9 @@ async def lifespan(_: FastAPI):
 
 def create_app() -> FastAPI:
     s = get_settings()
+    check_production_settings(s)
     app = FastAPI(title="Buildout Pros – Lien Waivers", lifespan=lifespan, docs_url=None, redoc_url=None)
+    app.add_middleware(SecurityMiddleware, base_url=s.app_base_url)
     app.add_middleware(SessionMiddleware, secret_key=s.secret_key, same_site="lax",
                        https_only=s.app_base_url.startswith("https"), max_age=60 * 60 * 12)
     app.mount("/static", StaticFiles(directory=str(Path(routes.__file__).parent / "static")), name="static")
