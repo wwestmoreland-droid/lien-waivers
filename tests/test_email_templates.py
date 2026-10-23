@@ -28,10 +28,11 @@ VALUES = dict(first_name="Dana", project_name="Studio Co - Palatine, IL", amount
 
 
 def test_partial_renders_amounts_dates_token():
-    r = render_text(file_text("partial"), VALUES)
+    r = render_text(file_text("partial"), dict(VALUES, payment_amount=Decimal("627.30")))
     assert r.subject == "Lien waiver – Studio Co - Palatine, IL – $29,647.80 [LW-7]"
     assert r.body.startswith("Hi Dana,\n")
-    assert "on Oct 16, 2026 ($29,647.80)" in r.body
+    assert "on Oct 16, 2026 ($627.30)" in r.body  # this payment
+    assert "for the $29,647.80 we've paid you on this job so far" in r.body  # the waiver: total paid
     assert "through Sep 30, 2026" in r.body
     assert "next payment" not in r.body  # [if gate] off: payments are never held
     assert r.body.rstrip().endswith("Thanks,\nWill Westmoreland\nBuildout Pros")
@@ -41,7 +42,7 @@ def test_empty_first_name_and_empty_field_sentences_are_dropped():
     r = render_text(file_text("partial"), dict(VALUES, first_name="", invoice_no=None))
     assert r.body.startswith("Hi,\n")
     assert "We paid invoice" not in r.body          # sentence with an empty field is left out
-    assert "The lien waiver for that payment" in r.body  # the next sentence on the line stays
+    assert "The attached lien waiver is for the $29,647.80" in r.body  # the next sentence on the line stays
     assert "{" not in r.body
 
 

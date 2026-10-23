@@ -99,7 +99,8 @@ def decide(event_kind: str, p: PayableFacts, ctc: CTC, sub: SubFacts, flags: Fla
 
 
 def waiver_amount(waiver_type: WaiverType, payable_amount: Decimal | None) -> Decimal | None:
-    """Partial: this payment. Conditional final: the final payment. Unconditional final: no amount."""
+    """Conditional final: the final payment. Unconditional final: no amount. Partials use the
+    total paid to date instead (service.paid_through); this payment is the fallback."""
     if waiver_type == WaiverType.UNCONDITIONAL_FINAL:
         return None
     return payable_amount

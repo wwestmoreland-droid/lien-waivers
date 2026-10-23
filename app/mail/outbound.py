@@ -94,6 +94,7 @@ def merge_values(db: Session, w: Waiver, mb: Mailbox | None) -> dict:
         "first_name": templates.first_name(_recipient_name(db, sc)),
         "project_name": project.name or project.number,
         "amount": w.amount if w.amount is not None else p.amount,
+        "payment_amount": p.amount,
         "invoice_no": p.invoice_no,
         "paid_date": p.paid_date,
         "through_date": w.through_date,
@@ -152,6 +153,16 @@ def queue_waiver_request(db: Session, w: Waiver, actor: str = "system:mail") -> 
     _attach_waiver_pdf(db, e, w)
     maybe_auto_send(db, e)
     return e
+
+
+def rerender_request_draft(db: Session, w: Waiver) -> None:
+    """Rewrite an untouched request draft after the waiver changed. Drafts a person edited are left alone."""
+    for e in db.scalars(select(EmailMessage).where(EmailMessage.waiver_id == w.id, EmailMessage.kind == "waiver_request",
+                                                   EmailMessage.status == "draft")):
+        if db.scalar(select(EmailEvent.id).where(EmailEvent.email_id == e.id, EmailEvent.action == "edited")):
+            continue
+        r = templates.render(db, REQUEST_TEMPLATE[WaiverType(w.type)], merge_values(db, w, e.mailbox))
+        e.subject, e.body_text = r.subject, r.body
 
 
 def refresh_draft_attachments(db: Session, w: Waiver) -> None:

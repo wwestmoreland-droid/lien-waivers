@@ -263,7 +263,7 @@ def test_verify_compares_against_request(mail):
                 def create(**kw):
                     assert kw["model"] == "claude-opus-5-5" and kw["fallbacks"] == "default"
                     text = ('{"is_lien_waiver": true, "appears_signed": true, "notary_completed": false,'
-                            ' "waiver_type": "unconditional_partial", "amount": "627.30", "through_date": "2026-10-31",'
+                            ' "waiver_type": "unconditional_partial", "amount": "30275.10", "through_date": "2026-10-31",'
                             ' "project_name_on_form": "Studio Co", "project_matches": true, "signer_company": "Delta",'
                             ' "is_supplier_waiver": false, "issues": [], "summary": "ok"}')
                     return SimpleNamespace(stop_reason="end_turn", model=kw["model"],
@@ -313,3 +313,19 @@ def test_connecting_catches_up_on_recent_mail(mail):
     inbound.poll_all(db)  # second check doesn't store it twice
     found = db.scalars(select(EmailMessage).where(EmailMessage.mailbox_id == ro.id)).all()
     assert len(found) == 1 and found[0].waiver_id == w.id
+
+
+def test_unsent_partial_follows_an_earlier_payment_recorded_later(mail):
+    db = mail.db
+    w = pay(mail, 1003, "2026-10-20")
+    e = request_email(db, w)
+    assert "$30,275.10" in e.subject
+    # COR #1 turns out to have been paid on Oct 18, before Pay App 2: the unsent waiver catches up.
+    mail.source.row("ar_ap", 1002).values.update(approval="Approved", paid_date="2026-10-18")
+    run_sync(db, mail.source, trigger="test")
+    db.expire_all()
+    w = db.get(Waiver, w.id)
+    assert str(w.amount) == "31938.10"
+    e = request_email(db, w)
+    assert "$31,938.10" in e.subject and "$31,938.10 we've paid you" in e.body_text
+    assert "($627.30)" in e.body_text  # this payment

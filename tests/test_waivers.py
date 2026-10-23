@@ -54,7 +54,8 @@ def test_paid_partial_creates_unconditional_partial_with_pdf(db, tracked):
     sync(db, tracked)
     [w] = waivers(db, 1003)
     assert w.type == W.UNCONDITIONAL_PARTIAL and w.status == WaiverStatus.DRAFT
-    assert str(w.amount) == "627.30" and w.through_date == date(2026, 10, 31) and w.through_date_is_fallback
+    # Total paid to Delta on this job: Pay App 1 ($29,647.80, paid Oct 16) + this one ($627.30).
+    assert str(w.amount) == "30275.10" and w.through_date == date(2026, 10, 31) and w.through_date_is_fallback
     assert Path(w.generated_pdf_path).exists()
     assert len(PdfReader(w.generated_pdf_path).pages) == 1
     sync(db, tracked)
@@ -219,3 +220,18 @@ def test_expected_waivers_for_backfill_report(db, tracked):
     p = db.scalar(select(Payable).where(Payable.source_row_id == 1001))  # Delta Pay App 1, paid, CTC>0
     assert service.expected_waiver_types(db, p) == [W.UNCONDITIONAL_PARTIAL]
     assert db.scalar(select(func.count(Waiver.id))) == 0
+
+
+def test_partial_amount_is_total_paid_and_follows_paid_order(db, tracked):
+    # Pay App 2 is paid before Pay App 1.5 (1002, $1,663.00) even though it came in later.
+    tracked.row("ar_ap", 1003).values["paid_date"] = "2026-10-20"
+    sync(db, tracked)
+    [w3] = waivers(db, 1003)
+    assert str(w3.amount) == "30275.10"  # 29,647.80 paid Oct 16 + 627.30
+    tracked.row("ar_ap", 1002).values["approval"] = "Approved"
+    tracked.row("ar_ap", 1002).values["paid_date"] = "2026-10-22"
+    sync(db, tracked)
+    [w2] = [w for w in waivers(db, 1002) if w.type == W.UNCONDITIONAL_PARTIAL]
+    assert str(w2.amount) == "31938.10"  # everything paid through Oct 22
+    db.expire_all()
+    assert str(db.get(type(w3), w3.id).amount) == "30275.10"  # earlier waiver keeps its own total

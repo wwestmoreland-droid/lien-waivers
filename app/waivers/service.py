@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
+from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
 
@@ -11,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.ctc.engine import compute_for_subcontract
+from app.ctc.engine import compute_for_subcontract, order_key
 from app.db.models import Payable, PayableEvent, Project, Subcontract, Waiver, WaiverEvent
 from app.matching.normalize import state_from_project_number
 from app.services.audit import audit
@@ -124,6 +125,51 @@ def refresh_payable_reviews(db: Session) -> None:
 
 # ---------------------------------------------------------------- creating waivers
 
+PARTIALS = (WaiverType.CONDITIONAL_PARTIAL, WaiverType.UNCONDITIONAL_PARTIAL)
+
+
+def paid_through(sc: Subcontract, p: Payable) -> Decimal:
+    """Everything paid to the sub on this job up to and including this payment (in paid-date
+    order). For a payment not made yet (a conditional partial), all payments so far plus this one."""
+    def key(x: Payable):
+        return (x.paid_date, order_key(x))
+    total = p.amount or Decimal(0)
+    for x in sc.payables:
+        if x.id == p.id or x.deleted_in_source or not x.paid_date:
+            continue
+        if (x.approval_status or "").strip().lower() == "rejected":
+            continue
+        if p.paid_date is None or key(x) <= key(p):
+            total += x.amount or Decimal(0)
+    return total
+
+
+def amount_for(wtype: WaiverType, sc: Subcontract, p: Payable) -> Decimal | None:
+    """A partial waiver covers the total paid out to date, not just this invoice."""
+    if wtype in PARTIALS:
+        return paid_through(sc, p)
+    return waiver_amount(wtype, p.amount)
+
+
+def refresh_partial_amounts(db: Session, actor: str = SYSTEM) -> int:
+    """Waivers not sent yet follow the paid-to-date total (payments can land in any order)."""
+    from app.mail import outbound
+
+    n = 0
+    for w in db.scalars(select(Waiver).where(Waiver.type.in_([t.value for t in PARTIALS]),
+                                             Waiver.status.in_([s.value for s in EDITABLE]))).all():
+        new = paid_through(w.subcontract, w.payable)
+        if w.amount == new:
+            continue
+        old, w.amount = w.amount, new
+        log_event(db, w, actor, "amount_changed", note="total paid to date", old=str(old), new=str(new))
+        if w.template_key:
+            render_pdf(db, w, actor)
+        outbound.rerender_request_draft(db, w)
+        n += 1
+    return n
+
+
 def create_waiver(db: Session, p: Payable, sc: Subcontract, wtype: WaiverType, ev: PayableEvent | None,
                   actor: str = SYSTEM) -> Waiver:
     existing = db.scalar(select(Waiver).where(Waiver.payable_id == p.id, Waiver.type == wtype.value))
@@ -131,7 +177,7 @@ def create_waiver(db: Session, p: Payable, sc: Subcontract, wtype: WaiverType, e
         return existing
     state = project_state(sc.project)
     w = Waiver(payable_id=p.id, subcontract_id=sc.id, type=wtype.value, state=state,
-               amount=waiver_amount(wtype, p.amount), through_date=p.through_date,
+               amount=amount_for(wtype, sc, p), through_date=p.through_date,
                through_date_is_fallback=p.through_date_is_fallback,
                exceptions_text=exceptions_for(sc, as_of=p) if wtype == WaiverType.CONDITIONAL_FINAL else None,
                status=WaiverStatus.DRAFT.value, trigger_event_id=ev.id if ev else None,
