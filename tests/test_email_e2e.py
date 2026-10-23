@@ -278,6 +278,8 @@ def test_waivers_from_before_email_get_request_drafts(mail):
     db = mail.db
     w = pay(mail)
     e = request_email(db, w)
+    from app.db.models import EmailEvent
+    db.query(EmailEvent).filter(EmailEvent.email_id == e.id).delete()
     db.delete(e.attachments[0]); db.delete(e)
     db.commit()
     run_sync(db, mail.source, trigger="test")

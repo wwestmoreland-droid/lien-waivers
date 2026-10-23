@@ -14,9 +14,17 @@ from app.db.models import Base
 from tests.fixtures.sheets import FakeSource
 
 
+# TEST_DATABASE_URL=postgresql://... runs the whole suite on Postgres, like production.
+PG_URL = os.environ.get("TEST_DATABASE_URL")
+
+
 @pytest.fixture
 def engine():
-    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    if PG_URL:
+        eng = create_engine(db_session._normalize_url(PG_URL), poolclass=StaticPool)
+        Base.metadata.drop_all(eng)
+    else:
+        eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(eng)
     db_session.set_engine(eng)
     yield eng
@@ -33,3 +41,17 @@ def db(engine):
 @pytest.fixture
 def source():
     return FakeSource()
+
+
+@pytest.fixture(autouse=True)
+def _no_real_smartsheet_writes():
+    """Tests never reach the real Smartsheet; tests that check writes install a fake."""
+    from app.services import sync_runner
+
+    class Off:
+        def get_row(self, row_id):
+            raise RuntimeError("no Smartsheet in tests")
+
+    sync_runner.set_writer_factory(lambda: Off())
+    yield
+    sync_runner.set_writer_factory(None)

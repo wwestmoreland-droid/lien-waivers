@@ -124,8 +124,9 @@ def email_center(request: Request, view: str = "inbox", project: str = "", vendo
             EmailMessage.direction == "in", EmailMessage.waiver_id.is_(None), EmailMessage.kind == "inbound")) or 0,
     }
     projects = db.scalars(select(Project).where(Project.is_tracked.is_(True)).order_by(Project.number)).all()
-    vendors = db.scalars(select(Vendor).join(Subcontract).join(Project).where(Project.is_tracked.is_(True))
-                         .distinct().order_by(Vendor.name)).all()
+    # No DISTINCT over vendors: Postgres can't compare their JSON column.
+    tracked_vendors = select(Subcontract.vendor_id).join(Project).where(Project.is_tracked.is_(True))
+    vendors = db.scalars(select(Vendor).where(Vendor.id.in_(tracked_vendors)).order_by(Vendor.name)).all()
     return render(request, "email_center.html", user, view=view, rows=rows, states=states, counts=counts,
                   projects=projects, vendors=vendors, sender=mailboxes.active_sender(db),
                   f={"project": project, "vendor": vendor, "wstatus": wstatus, "unread": unread, "needs": needs,
