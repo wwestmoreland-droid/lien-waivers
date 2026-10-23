@@ -1,6 +1,7 @@
 """Turn payable events into waivers, generate their PDFs, and record every status change."""
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from functools import lru_cache
 from pathlib import Path
@@ -368,3 +369,75 @@ def accept_and_ack(db: Session, w: Waiver, actor: str, note: str = ""):
     e = outbound.draft_reply(db, original, "received", actor=actor)
     outbound.maybe_auto_send(db, e)
     return e
+
+
+# ---------------------------------------------------------------- past paid invoices
+
+@dataclass
+class PastInvoice:
+    payable: Payable
+    sc: Subcontract | None
+    wtype: WaiverType | None  # what the rules give for "paid", at that point in time
+    existing: Waiver | None   # a waiver of that type already exists
+    reason: str               # why it can't be prepared, when it can't
+
+    @property
+    def can_prepare(self) -> bool:
+        return self.wtype is not None and self.existing is None
+
+
+def past_paid_invoices(db: Session, project: str = "", vendor_id: int | None = None,
+                       paid_from: date | None = None, paid_to: date | None = None,
+                       only_missing: bool = True) -> list[PastInvoice]:
+    """Paid invoices on tracked jobs, with the waiver each one should have. Invoices that were
+    already paid when a job was first tracked are kept as history and get no waiver on their
+    own; this is where a person picks the ones that should."""
+    q = (select(Payable).join(Project, Project.number == Payable.project_number)
+         .where(Project.is_tracked.is_(True), Payable.paid_date.is_not(None), Payable.deleted_in_source.is_(False))
+         .order_by(Payable.paid_date.desc(), Payable.id.desc()))
+    if project:
+        q = q.where(Payable.project_number == project)
+    if vendor_id:
+        q = q.where(Payable.vendor_id == vendor_id)
+    if paid_from:
+        q = q.where(Payable.paid_date >= paid_from)
+    if paid_to:
+        q = q.where(Payable.paid_date <= paid_to)
+    out = []
+    for p in db.scalars(q.limit(1000)):
+        if p.match_status == "direct_purchase":
+            continue
+        if p.match_status != "matched" or not p.subcontract_id:
+            out.append(PastInvoice(p, None, None, None, "not matched to a subcontract yet (Queues → Unmatched AP)"))
+            continue
+        sc = db.get(Subcontract, p.subcontract_id)
+        d = decide("paid", facts(p), compute_for_subcontract(sc, as_of=p),
+                   SubFacts(has_retention=sc.has_retention), flags(db))
+        existing = None
+        if d.waiver:
+            existing = db.scalar(select(Waiver).where(Waiver.payable_id == p.id, Waiver.type == d.waiver.value))
+        reason = "" if d.waiver else (d.reviews[0].message if d.reviews else d.note or "no waiver for this one")
+        out.append(PastInvoice(p, sc, d.waiver, existing, reason))
+    if only_missing:
+        out = [x for x in out if x.existing is None]
+    return out
+
+
+def prepare_past(db: Session, payable_ids: list[int], actor: str) -> list[Waiver]:
+    """Create waivers (and their request drafts in the Outbox) for the picked paid invoices."""
+    made = []
+    wanted = set(payable_ids)
+    for item in past_paid_invoices(db, only_missing=True):
+        if item.payable.id not in wanted or not item.can_prepare:
+            continue
+        p = item.payable
+        ev = db.scalar(select(PayableEvent).where(PayableEvent.payable_id == p.id, PayableEvent.kind == "paid"))
+        w = create_waiver(db, p, item.sc, item.wtype, ev, actor)
+        log_event(db, w, actor, "prepared", note=f"past invoice paid {p.paid_date:%b %-d, %Y}")
+        if ev is not None:
+            ev.processed_at = ev.processed_at or now()
+            ev.outcome = f"{item.wtype.value} #{w.id} (prepared by {actor})"
+        audit(db, actor, "waiver.prepared_past", "payable", p.source_row_id, waiver_id=w.id, type=item.wtype.value)
+        made.append(w)
+    db.flush()
+    return made

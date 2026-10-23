@@ -68,6 +68,45 @@ def waivers_page(request: Request, status: str = "open", project: str = "", type
         "WaiverType": WaiverType})
 
 
+def _day(s: str) -> date | None:
+    try:
+        return date.fromisoformat(s) if s else None
+    except ValueError:
+        return None
+
+
+@router.get("/waivers-past", response_class=HTMLResponse)
+def past_invoices_page(request: Request, project: str = "", vendor: str = "", paid_from: str = "",
+                       paid_to: str = "", show: str = "missing", msg: str = "", db: Session = Depends(get_db),
+                       user: User = Depends(current_user)):
+    vid = int(vendor) if vendor.isdigit() else None
+    rows = service.past_paid_invoices(db, project, vid, _day(paid_from), _day(paid_to), only_missing=show != "all")
+    projects = db.scalars(select(Project).where(Project.is_tracked.is_(True)).order_by(Project.number)).all()
+    tracked_vendors = select(Subcontract.vendor_id).join(Project).where(Project.is_tracked.is_(True))
+    vendors = db.scalars(select(Vendor).where(Vendor.id.in_(tracked_vendors)).order_by(Vendor.name)).all()
+    return templates.TemplateResponse(request, "waivers_past.html", {
+        "user": user, "rows": rows, "projects": projects, "vendors": vendors, "msg": msg,
+        "f": {"project": project, "vendor": vendor, "paid_from": paid_from, "paid_to": paid_to, "show": show}})
+
+
+@router.post("/waivers-past/prepare")
+async def prepare_past_invoices(request: Request, db: Session = Depends(get_db),
+                                user: User = Depends(require_role(*EDITORS))):
+    from urllib.parse import quote, urlencode
+
+    form = await request.form()
+    ids = [int(x) for x in form.getlist("payable_id") if str(x).isdigit()]
+    made = service.prepare_past(db, ids, user.email)
+    db.commit()
+    blocked = sum(1 for w in made if w.status == WaiverStatus.NEEDS_REVIEW)
+    msg = (f"Prepared {len(made)} waiver{'s' if len(made) != 1 else ''}. The request emails are drafts in the Outbox "
+           "for you to check and send." if made else "Nothing was prepared; pick at least one invoice.")
+    if blocked:
+        msg += f" {blocked} need review first (see the Waivers page)."
+    keep = {k: form.get(k, "") for k in ("project", "vendor", "paid_from", "paid_to")}
+    return RedirectResponse(f"/waivers-past?{urlencode(keep)}&msg={quote(msg)}", status_code=303)
+
+
 @router.get("/waivers/{wid}", response_class=HTMLResponse)
 def waiver_detail(request: Request, wid: int, msg: str = "", db: Session = Depends(get_db),
                   user: User = Depends(current_user)):

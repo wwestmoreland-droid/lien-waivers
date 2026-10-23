@@ -2,7 +2,7 @@
 {% block title %}Waivers{% endblock %}
 {% block content %}
 <h1>Waivers</h1>
-<p class="sub">Created automatically when a payable is approved or paid. Emails come in Phase 3. Until then, download the PDF, send it yourself, then click "Mark sent".</p>
+<p class="sub">Created automatically when a payable is approved or paid. For invoices that were paid before a job was tracked, use <a href="/waivers-past">Past paid invoices</a>.</p>
 {% set sbadge = {'needs_review': 'bad', 'draft': 'new', 'sent': 'warn', 'received': 'warn', 'accepted': 'ok', 'rejected': 'bad', 'void': ''} %}
 
 <div class="tabs">

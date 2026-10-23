@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Past paid invoices{% endblock %}
+{% block content %}
+<p class="small"><a href="/waivers">← Waivers</a></p>
+<h1>Past paid invoices</h1>
+<p class="sub">Invoices that were already paid when a job started being tracked don't get a waiver on their own. Pick the ones that should, by paid date, and click Prepare.
+Each one gets the waiver the rules give for a paid invoice at that point in the job (unconditional partial, or unconditional final for the last payment), and its request email waits in the Outbox for you to send.</p>
+{% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
+
+<form class="filters" method="get">
+  <select name="project"><option value="">All tracked jobs</option>{% for p in projects %}<option value="{{ p.number }}" {{ 'selected' if f.project == p.number }}>{{ p.number }} {{ p.name or '' }}</option>{% endfor %}</select>
+  <select name="vendor"><option value="">All subs</option>{% for v in vendors %}<option value="{{ v.id }}" {{ 'selected' if f.vendor == v.id|string }}>{{ v.name }}</option>{% endfor %}</select>
+  <label>Paid from <input type="date" name="paid_from" value="{{ f.paid_from }}"></label>
+  <label>to <input type="date" name="paid_to" value="{{ f.paid_to }}"></label>
+  <select name="show"><option value="missing">Without a waiver</option><option value="all" {{ 'selected' if f.show == 'all' }}>All paid invoices</option></select>
+  <button class="btn">Filter</button>
+</form>
+
+{% set editor = user.role in ('Admin', 'AP') %}
+<form method="post" action="/waivers-past/prepare">
+  {% for k in ('project', 'vendor', 'paid_from', 'paid_to') %}<input type="hidden" name="{{ k }}" value="{{ f[k] }}">{% endfor %}
+  {% set ready = rows|selectattr('can_prepare')|list %}
+  {% if editor and ready %}
+  <div class="row-actions" style="margin:8px 0">
+    <label class="small"><input type="checkbox" onclick="document.querySelectorAll('input[name=payable_id]').forEach(c => c.checked = this.checked)"> Select all {{ ready|length }}</label>
+    <button class="btn primary">Prepare waivers for selected</button>
+  </div>
+  {% endif %}
+  <div class="table-wrap"><table>
+    <tr><th></th><th>Paid</th><th>Sub</th><th>Project</th><th>Invoice</th><th class="n">Amount</th><th>Through date</th><th>Waiver</th></tr>
+    {% for r in rows %}
+    {% set p = r.payable %}
+    <tr>
+      <td>{% if editor and r.can_prepare %}<input type="checkbox" name="payable_id" value="{{ p.id }}">{% endif %}</td>
+      <td style="white-space:nowrap">{{ p.paid_date|fdate }}</td>
+      <td>{% if r.sc %}<a href="/subs/{{ r.sc.id }}">{{ r.sc.vendor.name }}</a>{% else %}{{ p.vendor_parsed }}{% endif %}</td>
+      <td style="white-space:nowrap">{{ p.project_number }}</td>
+      <td>{{ p.invoice_no or '' }}{% if p.is_retention_invoice %} <span class="badge">retention</span>{% endif %}</td>
+      <td class="n">{{ p.amount|money }}</td>
+      <td class="small">{{ p.through_date|fdate }}{% if p.through_date_is_fallback %} <span class="muted">(date received)</span>{% endif %}</td>
+      <td class="small">{% if r.existing %}<a href="/waivers/{{ r.existing.id }}">#{{ r.existing.id }}</a> {{ r.existing.status }}
+        {% elif r.wtype %}<span class="badge new">{{ r.wtype.label }}</span>
+        {% else %}<span class="muted">{{ r.reason }}</span>{% endif %}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="8" class="muted">No paid invoices {{ 'without a waiver ' if f.show != 'all' }}match these filters.</td></tr>
+    {% endfor %}
+  </table></div>
+</form>
+{% endblock %}
