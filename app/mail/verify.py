@@ -113,6 +113,8 @@ def verify(w: Waiver, attachment: EmailAttachment, client=None) -> dict:
             "filename": attachment.filename}
     if client is None and not settings.anthropic_api_key:
         return base | {"status": "not_checked", "reason": "ANTHROPIC_API_KEY isn't set, so check it by eye."}
+    if not Path(attachment.path).exists():
+        return base | {"status": "not_checked", "reason": "The attachment file is missing."}
     data = base64.standard_b64encode(Path(attachment.path).read_bytes()).decode()
     if attachment.is_pdf:
         block = {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": data}}

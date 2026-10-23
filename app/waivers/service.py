@@ -15,6 +15,7 @@ from app.config import get_settings
 from app.ctc.engine import compute_for_subcontract, order_key
 from app.db.models import Payable, PayableEvent, Project, Subcontract, Waiver, WaiverEvent
 from app.matching.normalize import state_from_project_number
+from app.services import filestore
 from app.services.audit import audit
 from app.services.reviews import upsert_review
 from app.services.settings_store import get_setting
@@ -234,7 +235,7 @@ def render_pdf(db: Session, w: Waiver, actor: str, today: date | None = None) ->
     folder = waiver_dir() / str(w.id)
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / f"{WaiverType(w.type).value.lower()}-v{w.pdf_version}.pdf"
-    path.write_bytes(data)
+    filestore.write(db, path, data)
     w.generated_pdf_path = str(path)
     log_event(db, w, actor, "pdf_generated", version=w.pdf_version, template=t.key)
     from app.mail import outbound
@@ -303,7 +304,7 @@ def mark_received(db: Session, w: Waiver, actor: str, filename: str, content: by
     folder.mkdir(parents=True, exist_ok=True)
     safe = "".join(ch for ch in Path(filename).name if ch.isalnum() or ch in "._- ") or "signed.pdf"
     path = folder / f"signed-{now():%Y%m%d%H%M%S}-{safe}"
-    path.write_bytes(content)
+    filestore.write(db, path, content)
     w.signed_pdf_path = str(path)
     w.received_at = now()
     log_event(db, w, actor, "received", WaiverStatus.RECEIVED.value, file=path.name)
@@ -324,17 +325,41 @@ def reject(db: Session, w: Waiver, actor: str, reason: str) -> None:
     audit(db, actor, "waiver.rejected", "waiver", w.id, reason=reason)
 
 
-def void(db: Session, w: Waiver, actor: str, reason: str) -> None:
-    if w.status == WaiverStatus.VOID:
-        return
-    log_event(db, w, actor, "voided", WaiverStatus.VOID.value, note=reason)
+def void(db: Session, w: Waiver, actor: str, reason: str, notify_sub: bool = False):
+    """Cancel a waiver that's no longer valid. Unsent emails for it are discarded and no more
+    reminders go out. If it was already sent, a "please disregard" reply can be drafted.
+    Returns that draft, if one was made."""
     from app.db.models import EmailMessage
+    from app.mail import outbound
+
+    if w.status == WaiverStatus.VOID:
+        return None
+    was_sent = w.sent_at is not None
+    log_event(db, w, actor, "voided", WaiverStatus.VOID.value, note=reason)
     for e in db.scalars(select(EmailMessage).where(EmailMessage.waiver_id == w.id,
-                                                   EmailMessage.status.in_(("draft", "queued")))):
+                                                   EmailMessage.status.in_(("draft", "queued", "failed")))):
         e.status = "discarded"
     audit(db, actor, "waiver.voided", "waiver", w.id, reason=reason)
     for kind in ("statutory_form_missing", "template_missing", "final_exceptions"):
         upsert_review(db, kind, "waiver", w.id, None, "", False)
+    root = outbound.thread_root(db, w) if was_sent and notify_sub else None
+    if root is not None:
+        return outbound.draft_reply(db, root, "cancelled", actor=actor)
+    return None
+
+
+def restore(db: Session, w: Waiver, actor: str) -> None:
+    """Undo a cancel: the waiver goes back to a draft with a fresh PDF and request email."""
+    if w.status != WaiverStatus.VOID:
+        raise ValueError("Only a cancelled waiver can be restored.")
+    w.sent_at = w.requested_at = w.received_at = w.verified_at = None
+    w.reminder_count, w.last_reminder_at, w.escalated_at = 0, None, None
+    log_event(db, w, actor, "restored", WaiverStatus.DRAFT.value)
+    audit(db, actor, "waiver.restored", "waiver", w.id)
+    attach_template_and_render(db, w, actor)
+    if w.status == WaiverStatus.DRAFT:
+        from app.mail import outbound
+        outbound.queue_waiver_request(db, w, actor, fresh=True)
 
 
 # ---------------------------------------------------------------- reporting helpers

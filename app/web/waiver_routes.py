@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.auth import current_user, require_role
 from app.db.models import Project, Subcontract, User, Vendor, Waiver
 from app.db.session import get_db
+from app.services import filestore
 from app.services.audit import audit
 from app.services.settings_store import get_setting, set_setting
 from app.waivers import pdf, service
@@ -45,7 +46,7 @@ def _back(w: Waiver, msg: str = "") -> RedirectResponse:
 
 @router.get("/waivers", response_class=HTMLResponse)
 def waivers_page(request: Request, status: str = "open", project: str = "", type: str = "", q: str = "",
-                 db: Session = Depends(get_db), user: User = Depends(current_user)):
+                 msg: str = "", db: Session = Depends(get_db), user: User = Depends(current_user)):
     query = (select(Waiver).join(Subcontract).join(Project).join(Vendor, Subcontract.vendor_id == Vendor.id)
              .where(Project.is_tracked.is_(True)).order_by(Waiver.id.desc()))
     if status == "open":
@@ -65,6 +66,7 @@ def waivers_page(request: Request, status: str = "open", project: str = "", type
     return templates.TemplateResponse(request, "waivers.html", {
         "user": user, "rows": rows, "counts": counts, "projects": projects, "types": list(WaiverType),
         "statuses": list(WaiverStatus), "f": {"status": status, "project": project, "type": type, "q": q},
+        "msg": msg,
         "WaiverType": WaiverType})
 
 
@@ -127,18 +129,20 @@ def waiver_detail(request: Request, wid: int, msg: str = "", db: Session = Depen
 @router.get("/waivers/{wid}/pdf")
 def waiver_pdf(wid: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
     w = _waiver(db, wid)
-    if not w.generated_pdf_path or not Path(w.generated_pdf_path).exists():
-        raise HTTPException(404, "No PDF generated yet")
-    return FileResponse(w.generated_pdf_path, media_type="application/pdf",
-                        headers={"Content-Disposition": f'inline; filename="{Path(w.generated_pdf_path).name}"'})
+    local = filestore.ensure(db, w.generated_pdf_path)
+    if local is None:
+        raise HTTPException(404, "The PDF file is missing. Click Regenerate PDF on the waiver page.")
+    return FileResponse(local, media_type="application/pdf",
+                        headers={"Content-Disposition": f'inline; filename="{local.name}"'})
 
 
 @router.get("/waivers/{wid}/signed")
 def waiver_signed(wid: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
     w = _waiver(db, wid)
-    if not w.signed_pdf_path or not Path(w.signed_pdf_path).exists():
-        raise HTTPException(404, "No signed copy yet")
-    return safe_file_response(w.signed_pdf_path, Path(w.signed_pdf_path).name, None)
+    local = filestore.ensure(db, w.signed_pdf_path)
+    if local is None:
+        raise HTTPException(404, "The signed copy's file is missing.")
+    return safe_file_response(str(local), local.name, None)
 
 
 def _act(db: Session, w: Waiver, fn, *args):
@@ -202,9 +206,50 @@ def reject(wid: int, reason: str = Form(...), custom_reason: str = Form(""), db:
 
 
 @router.post("/waivers/{wid}/void")
-def void(wid: int, reason: str = Form(...), db: Session = Depends(get_db),
+def void(wid: int, reason: str = Form(...), notify: str = Form(""), db: Session = Depends(get_db),
          user: User = Depends(require_role(*EDITORS))):
-    return _act(db, _waiver(db, wid), service.void, user.email, reason)
+    w = _waiver(db, wid)
+    note = service.void(db, w, user.email, reason, notify_sub=notify == "yes")
+    db.commit()
+    if note is not None:
+        return RedirectResponse(f"/email/{note.id}/edit", status_code=303)
+    return _back(w, "Cancelled.")
+
+
+@router.post("/waivers/{wid}/restore")
+def restore(wid: int, db: Session = Depends(get_db), user: User = Depends(require_role(*EDITORS))):
+    return _act(db, _waiver(db, wid), service.restore, user.email)
+
+
+@router.post("/waivers/cancel")
+async def cancel_many(request: Request, db: Session = Depends(get_db), user: User = Depends(require_role(*EDITORS))):
+    from urllib.parse import quote
+
+    form = await request.form()
+    reason = (form.get("reason") or "").strip()
+    ids = [int(x) for x in form.getlist("waiver_id") if str(x).isdigit()]
+    from urllib.parse import parse_qsl, urlencode, urlsplit
+
+    back = form.get("back") or "/waivers"
+    if not back.startswith("/") or back.startswith("//"):
+        back = "/waivers"
+    parts = urlsplit(back)
+    back = parts.path + ("?" + urlencode([(k, v) for k, v in parse_qsl(parts.query) if k != "msg"])
+                         if parts.query else "")
+    if not reason or not ids:
+        msg = "Pick at least one waiver and give a reason."
+    else:
+        notes = 0
+        for wid in ids:
+            w = db.get(Waiver, wid)
+            if w is not None and w.status != WaiverStatus.VOID:
+                notes += service.void(db, w, user.email, reason, notify_sub=form.get("notify") == "yes") is not None
+        db.commit()
+        msg = f"Cancelled {len(ids)} waiver{'s' if len(ids) != 1 else ''}."
+        if notes:
+            msg += f" {notes} \"please disregard\" note{'s are' if notes != 1 else ' is'} in the Outbox to send."
+    sep = "&" if "?" in back else "?"
+    return RedirectResponse(f"{back}{sep}msg={quote(msg)}", status_code=303)
 
 
 # ---------------------------------------------------------------- templates

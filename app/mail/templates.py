@@ -33,6 +33,7 @@ TEMPLATES = {
     "correction": ("07_correction.txt", "Needs correction"),
     "received": ("08_received.txt", "Received (optional)"),
     "supplier_list": ("09_supplier_list.txt", "Supplier list request (major trades)"),
+    "cancelled": ("10_cancelled.txt", "Waiver cancelled (please disregard)"),
 }
 
 BANNED_PHRASES = [

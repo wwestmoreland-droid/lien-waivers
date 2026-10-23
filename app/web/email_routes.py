@@ -28,6 +28,7 @@ from app.db.models import (
 from app.db.session import get_db
 from app.mail import mailboxes, outbound, templates as mail_templates
 from app.mail.inbound import receive_waiver_copy
+from app.services import filestore
 from app.services.audit import audit
 from app.services.settings_store import get_setting, set_setting
 from app.waivers import service as waiver_service
@@ -201,9 +202,10 @@ def _link_choices(db: Session, e: EmailMessage) -> list[Waiver]:
 @router.get("/email/attachment/{aid}")
 def attachment(aid: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
     a = db.get(EmailAttachment, aid)
-    if not a or not Path(a.path).exists():
-        raise HTTPException(404)
-    return safe_file_response(a.path, a.filename, a.content_type)
+    local = filestore.ensure(db, a.path) if a else None
+    if local is None:
+        raise HTTPException(404, "The attachment file is missing.")
+    return safe_file_response(str(local), a.filename, a.content_type)
 
 
 @router.post("/email/{eid}/link")

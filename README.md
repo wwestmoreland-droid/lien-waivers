@@ -81,6 +81,9 @@ The CTC engine was run on real Smartsheet rows for P--IL-102125-1 (IMAGE Studios
 3. If the Workspace admin restricts third-party access to Gmail, trust the client ID once in admin.google.com (Security → Access and data control → API controls → Manage Third-Party App Access).
 4. In Railway, add `ANTHROPIC_API_KEY` to turn on the automatic check (optional; without it, returned copies are checked by eye).
 
+## Where files are kept
+Waiver PDFs, signed copies and email attachments are stored **in the Postgres database** (`stored_files`), so a redeploy or a missing volume can't lose them; `DATA_DIR` on disk is only a cache that's refilled from the database when needed. Back up Postgres and you've backed up everything. After each start the app checks for files that were lost before this was in place, rebuilding waiver PDFs from their data, re-downloading attachments from Gmail and restoring signed copies from the emails they came in on (`lw recover-files` does the same by hand). A waiver request is never sent without its PDF.
+
 ## Running locally
 
 ```bash

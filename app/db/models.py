@@ -16,6 +16,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
+    LargeBinary,
     Numeric,
     String,
     Text,
@@ -633,3 +634,15 @@ class ContactBackfill(Base):
     error: Mapped[str | None] = mapped_column(Text)
 
     mailbox: Mapped[Mailbox] = relationship()
+
+
+class StoredFile(Base):
+    """Every PDF and attachment the app keeps, stored in the database so deploys and missing
+    volumes can't lose them. The copy on disk is only a cache."""
+
+    __tablename__ = "stored_files"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    key: Mapped[str] = mapped_column(String(1000), unique=True)  # path relative to DATA_DIR
+    content: Mapped[bytes] = mapped_column(LargeBinary)
+    size: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

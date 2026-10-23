@@ -7,7 +7,7 @@
 
 <div class="tabs">
   <a href="/waivers?status=open" class="{{ 'on' if f.status == 'open' }}">Open</a>
-  {% for s in statuses %}<a href="/waivers?status={{ s.value }}" class="{{ 'on' if f.status == s.value }}">{{ s.value|replace('_', ' ')|capitalize }} ({{ counts.get(s.value, 0) }})</a>{% endfor %}
+  {% for s in statuses %}<a href="/waivers?status={{ s.value }}" class="{{ 'on' if f.status == s.value }}">{{ 'Cancelled' if s.value == 'void' else s.value|replace('_', ' ')|capitalize }} ({{ counts.get(s.value, 0) }})</a>{% endfor %}
   <a href="/waivers?status=" class="{{ 'on' if not f.status }}">All</a>
 </div>
 
@@ -19,10 +19,23 @@
   <button class="btn">Filter</button>
 </form>
 
+{% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
+{% set editor = user.role in ('Admin', 'AP') %}
+<form method="post" action="/waivers/cancel" id="cancel-form"
+      onsubmit="return confirm('Cancel the selected waivers? Unsent emails for them are discarded and no reminders go out.')">
+<input type="hidden" name="back" value="{{ request.url.path }}?{{ request.url.query }}">
+{% if editor %}
+<div class="row-actions" style="margin:8px 0">
+  <input name="reason" placeholder="Why they're no longer valid" size="30">
+  <label class="small"><input type="checkbox" name="notify" value="yes" checked> Draft a "please disregard" note for ones already sent</label>
+  <button class="btn sm danger">Cancel selected</button>
+</div>
+{% endif %}
 <div class="table-wrap"><table>
-  <tr><th>#</th><th>Sub</th><th>Project</th><th>Type</th><th>Invoice</th><th class="n">Amount</th><th>Through</th><th>Status</th><th>Created</th><th></th></tr>
+  <tr><th>{% if editor %}<input type="checkbox" title="Select all" onclick="document.querySelectorAll('input[name=waiver_id]').forEach(c => c.checked = this.checked)">{% endif %}</th><th>#</th><th>Sub</th><th>Project</th><th>Type</th><th>Invoice</th><th class="n">Amount</th><th>Through</th><th>Status</th><th>Created</th><th></th></tr>
   {% for w in rows %}
   <tr>
+    <td>{% if editor and w.status != 'void' %}<input type="checkbox" name="waiver_id" value="{{ w.id }}">{% endif %}</td>
     <td><a href="/waivers/{{ w.id }}">{{ w.id }}</a></td>
     <td><a href="/subs/{{ w.subcontract_id }}">{{ w.subcontract.vendor.name }}</a></td>
     <td style="white-space:nowrap">{{ w.subcontract.project.number }}</td>
@@ -30,13 +43,14 @@
     <td>{{ w.payable.invoice_no or '' }}</td>
     <td class="n">{{ w.amount|money }}</td>
     <td>{% if not WaiverType(w.type).is_final %}{{ w.through_date|fdate }}{% if w.through_date_is_fallback and w.through_date %} <span class="badge warn" title="Date received, not a billed-through date">fallback</span>{% endif %}{% endif %}</td>
-    <td><span class="badge {{ sbadge.get(w.status, '') }}">{{ w.status|replace('_', ' ') }}</span>
+    <td><span class="badge {{ sbadge.get(w.status, '') }}">{{ 'cancelled' if w.status == 'void' else w.status|replace('_', ' ') }}</span>
       {% if w.review_reason %}<div class="small" style="color:var(--bad)">{{ w.review_reason }}</div>{% endif %}</td>
     <td class="small">{{ w.created_at|fdate }}</td>
     <td>{% if w.generated_pdf_path %}<a class="btn sm" href="/waivers/{{ w.id }}/pdf" target="_blank">PDF</a>{% endif %}</td>
   </tr>
   {% else %}
-  <tr><td colspan="10" class="muted">No waivers here.</td></tr>
+  <tr><td colspan="11" class="muted">No waivers here.</td></tr>
   {% endfor %}
 </table></div>
+</form>
 {% endblock %}

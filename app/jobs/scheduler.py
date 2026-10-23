@@ -11,7 +11,7 @@ from app.config import get_settings
 from app.db.session import session_scope
 from app.services.locks import JobAlreadyRunning
 from app.services.settings_store import get_setting
-from app.services.sync_runner import contacts_backfill_now, mail_now, reminders_now, sync_now
+from app.services.sync_runner import contacts_backfill_now, mail_now, recover_files_now, reminders_now, sync_now
 
 log = structlog.get_logger()
 
@@ -58,6 +58,11 @@ def start() -> None:
                        id=REMINDER_JOB_ID, max_instances=1, coalesce=True, replace_existing=True)
     _scheduler.add_job(lambda: _guarded("contacts_backfill", contacts_backfill_now), IntervalTrigger(minutes=1),
                        id="contacts_backfill", max_instances=1, coalesce=True, replace_existing=True)
+    # Once after each start: put back any PDF or attachment missing from disk.
+    from datetime import datetime, timedelta, timezone
+    _scheduler.add_job(lambda: _guarded("recover_files", recover_files_now), "date",
+                       run_date=datetime.now(timezone.utc) + timedelta(seconds=30), id="recover_files",
+                       replace_existing=True)
     _scheduler.start()
     log.info("scheduler.started", interval=current_interval_minutes())
 

@@ -91,6 +91,14 @@ def contacts_backfill_now() -> dict:
             return backfill.run_due(db)
 
 
+def recover_files_now() -> dict:
+    from app.services.recover_files import recover
+
+    with job_lock("recover_files"):
+        with session_scope() as db:
+            return recover(db)
+
+
 def reminders_now() -> dict:
     from app.mail import reminders
 

@@ -30,6 +30,14 @@ def migrate() -> None:
     typer.echo("Database is up to date.")
 
 
+@cli.command("recover-files")
+def recover_files() -> None:
+    """Rebuild or re-download PDFs and attachments missing from disk and the database."""
+    from app.services.sync_runner import recover_files_now
+
+    typer.echo(recover_files_now())
+
+
 @cli.command("sync")
 def sync() -> None:
     """Run one Smartsheet sync now (read-only)."""

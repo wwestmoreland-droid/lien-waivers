@@ -17,6 +17,7 @@ from app.config import get_settings
 from app.db.models import Contact, EmailAttachment, EmailEvent, EmailMessage, Mailbox, Waiver
 from app.mail import mailboxes, templates
 from app.mail.provider import OutAttachment, Outgoing, TokenError
+from app.services import filestore
 from app.services.settings_store import get_setting
 from app.waivers.types import WaiverStatus, WaiverType
 
@@ -29,6 +30,7 @@ KIND_LABELS = {
     "escalation": "Escalation to PM",
     "correction": "Needs correction",
     "received": "Received",
+    "cancelled": "Waiver cancelled",
     "free": "Email",
     "inbound": "Received email",
 }
@@ -118,10 +120,11 @@ def _attach_waiver_pdf(db: Session, e: EmailMessage, w: Waiver) -> None:
     for a in list(e.attachments):
         db.delete(a)
     db.flush()
-    if w.generated_pdf_path and Path(w.generated_pdf_path).exists():
+    local = filestore.ensure(db, w.generated_pdf_path)
+    if local is not None:
         name = f"{WaiverType(w.type).label.replace(' ', '_')}_Lien_Waiver_{w.subcontract.project.number}.pdf"
         db.add(EmailAttachment(email_id=e.id, filename=name, content_type="application/pdf",
-                               size=Path(w.generated_pdf_path).stat().st_size, path=w.generated_pdf_path))
+                               size=local.stat().st_size, path=w.generated_pdf_path))
     db.flush()
     db.refresh(e)
 
@@ -134,13 +137,16 @@ def _new_email(db: Session, **kw) -> EmailMessage:
     return e
 
 
-def queue_waiver_request(db: Session, w: Waiver, actor: str = "system:mail") -> EmailMessage | None:
-    """Draft the request email for a waiver that's ready (status draft). Idempotent."""
+def queue_waiver_request(db: Session, w: Waiver, actor: str = "system:mail", fresh: bool = False) -> EmailMessage | None:
+    """Draft the request email for a waiver that's ready (status draft). Idempotent.
+    fresh: a new request even if one was sent before (a cancelled waiver brought back)."""
     if w.status != WaiverStatus.DRAFT:
         return None
+    unsent = ("draft", "queued", "failed")
     existing = db.scalar(select(EmailMessage).where(EmailMessage.waiver_id == w.id,
                                                     EmailMessage.kind == "waiver_request",
-                                                    EmailMessage.status != "discarded"))
+                                                    EmailMessage.status.in_(unsent) if fresh
+                                                    else EmailMessage.status != "discarded"))
     if existing:
         return existing
     mb = mailboxes.sender_for_project(db, w.subcontract.project)
@@ -213,7 +219,7 @@ def draft_reply(db: Session, original: EmailMessage, kind: str, values: dict | N
 
 def kind_template(kind: str) -> str:
     return {"reminder_1": "reminder_1", "reminder_2": "reminder_2", "correction": "correction",
-            "received": "received", "escalation": "escalation"}[kind]
+            "received": "received", "escalation": "escalation", "cancelled": "cancelled"}[kind]
 
 
 def draft_escalation(db: Session, w: Waiver, actor: str = "system:mail") -> EmailMessage | None:
@@ -266,13 +272,26 @@ def send(db: Session, e: EmailMessage, actor: str) -> bool:
             return False
     if e.waiver and e.kind in ("waiver_request", "reminder_1"):
         _attach_waiver_pdf(db, e, e.waiver)
+    files = []
+    for a in e.attachments:
+        data = filestore.read(db, a.path)
+        if data is None:
+            # Never send a waiver request without its PDF (or any email missing a file it lists).
+            e.status = "failed"
+            e.error = f"The attachment {a.filename} is missing, so this wasn't sent. Regenerate the PDF, then send."
+            log_email(db, e, actor, "failed", error=e.error)
+            return False
+        files.append(OutAttachment(a.filename, a.content_type or mimetypes.guess_type(a.filename)[0]
+                                   or "application/octet-stream", data))
+    if e.waiver and e.kind == "waiver_request" and not files:
+        e.status = "failed"
+        e.error = "The waiver PDF is missing, so this wasn't sent. Regenerate the PDF on the waiver page, then send."
+        log_email(db, e, actor, "failed", error=e.error)
+        return False
     out = Outgoing(
         from_addr=mb.email, from_name=mb.display_name, to=list(e.to_addrs), cc=list(e.cc_addrs or []),
         subject=e.subject or "", body=e.body_text or "", thread_id=e.provider_thread_id,
-        in_reply_to=e.in_reply_to, references=e.references,
-        attachments=[OutAttachment(a.filename, a.content_type or mimetypes.guess_type(a.filename)[0]
-                                   or "application/octet-stream", Path(a.path).read_bytes())
-                     for a in e.attachments if Path(a.path).exists()],
+        in_reply_to=e.in_reply_to, references=e.references, attachments=files,
     )
     provider = mailboxes.provider_for(mb)
     try:

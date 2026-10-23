@@ -25,6 +25,7 @@ from app.db.models import (
 )
 from app.mail import mailboxes, outbound
 from app.mail.provider import CursorExpired, Incoming, TokenError
+from app.services import filestore
 from app.services.reviews import upsert_review
 from app.smartsheet.sync import PUBLIC_MAIL_DOMAINS
 from app.waivers.types import WaiverStatus
@@ -261,7 +262,7 @@ def _store(db: Session, mb: Mailbox, msg: Incoming, direction: str, status: str)
         while path.exists():
             path = folder / f"{i}-{safe}"
             i += 1
-        path.write_bytes(a.data)
+        filestore.write(db, path, a.data)
         db.add(EmailAttachment(email_id=e.id, filename=a.filename, content_type=a.content_type, size=a.size,
                                path=str(path)))
     db.flush()
@@ -282,7 +283,10 @@ def receive_waiver_copy(db: Session, w: Waiver, e: EmailMessage, actor: str,
     if att is None or w.status in (WaiverStatus.ACCEPTED, WaiverStatus.VOID):
         return False
     try:
-        waivers.mark_received(db, w, actor, att.filename, Path(att.path).read_bytes())
+        data = filestore.read(db, att.path)
+        if data is None:
+            return False
+        waivers.mark_received(db, w, actor, att.filename, data)
     except ValueError:
         return False
     tmpl = waivers.registry().templates.get(w.template_key or "")

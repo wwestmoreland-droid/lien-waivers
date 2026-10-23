@@ -5,7 +5,7 @@
 {% set editor = user.role in ('Admin', 'AP') %}
 <h1>{{ WaiverType(w.type).label }} waiver #{{ w.id }}</h1>
 <p class="sub"><a href="/subs/{{ sc.id }}">{{ sc.vendor.name }}</a> · <a href="/jobs/{{ sc.project.number }}">{{ sc.project.number }} {{ sc.project.name }}</a> · {{ w.state or '' }}
- · <span class="badge">{{ w.status|replace('_', ' ') }}</span></p>
+ · <span class="badge {{ 'bad' if w.status == 'void' }}">{{ 'cancelled' if w.status == 'void' else w.status|replace('_', ' ') }}</span></p>
 {% if msg %}<div class="warnbox">{{ msg }}</div>{% endif %}
 {% if w.review_reason %}<div class="warnbox"><strong>Blocked:</strong> {{ w.review_reason }}</div>{% endif %}
 
@@ -73,10 +73,17 @@
     {% if not editor %}</div>{% endif %}
   {% endif %}
   {% if editor %}
-    {% if w.status not in ('void', 'accepted') %}
-      <form method="post" action="/waivers/{{ w.id }}/void" class="filters" style="margin-top:10px">
-        <input name="reason" placeholder="Reason for voiding" required size="30"><button class="btn sm danger">Void</button>
+    {% if w.status != 'void' %}
+      <form method="post" action="/waivers/{{ w.id }}/void" class="filters" style="margin-top:10px"
+            onsubmit="return confirm('Cancel this waiver? Unsent emails for it are discarded and no reminders go out.')">
+        <input name="reason" placeholder="Why it's no longer valid" required size="30">
+        {% if w.sent_at %}<label class="small"><input type="checkbox" name="notify" value="yes" checked> Draft a "please disregard" note to the sub</label>{% endif %}
+        <button class="btn sm danger">Cancel waiver</button>
       </form>
+    {% else %}
+      <div class="warnbox" style="margin-top:10px">Cancelled{% for ev in w.events if ev.action == 'voided' %}{% if loop.last %} by {{ ev.actor }} on {{ ev.at|fdate }}: {{ ev.note }}{% endif %}{% endfor %}.
+        <form class="inline" method="post" action="/waivers/{{ w.id }}/restore"><button class="btn sm">Restore it</button></form>
+        <span class="small muted">Restoring makes it a draft again with a fresh PDF and request email in the Outbox.</span></div>
     {% endif %}
   </div>
   {% endif %}

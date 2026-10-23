@@ -1,0 +1,6 @@
+Hi {first_name},
+
+Please disregard the {waiver_type} we sent for {project_name} ({amount}). We don't need it anymore, so there's nothing to sign or send back.
+
+Thanks,
+{signature}
