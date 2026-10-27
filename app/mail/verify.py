@@ -56,6 +56,10 @@ What Buildout Pros asked for:
 - Through date: {through_date}
 - Notarization required: {notary}
 
+A signature counts whether it's handwritten, typed in a script font, an e-signature (Adobe, DocuSign
+and the like) or a pasted image of a signature. Only say it isn't signed if the signature line is
+actually empty.
+
 List in issues anything a reviewer should fix before accepting it: missing signature, blank or
 incomplete notary section, wrong form type, an amount or date that doesn't match, wrong project,
 or pages that are unreadable."""

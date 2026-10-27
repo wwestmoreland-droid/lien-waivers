@@ -400,3 +400,28 @@ def test_busy_personal_sender_mailbox_only_downloads_waiver_mail(mail):
     db.expire_all()
     assert db.get(Waiver, w.id).status == WaiverStatus.RECEIVED
     assert db.scalar(select(EmailMessage).where(EmailMessage.from_addr == "friend3@example.com")) is None
+
+
+def test_reply_that_wasnt_filed_is_filed_later(mail):
+    """However a reply ended up stored without being filed, the next check files it."""
+    db = mail.db
+    w, e = send_request(mail)
+    reply = mail.box.deliver(from_addr="sheila@deltafire.com", subject="Re: " + e.subject,
+                             thread_id=e.provider_thread_id, in_reply_to=e.rfc_message_id, body="Please see attached.",
+                             attachments=[InAttachment("Unconditional_partial_Lien_Waiver.pdf", "application/pdf", PDF)])
+    # Stored and linked, but not filed, and its attachment never saved.
+    stored = inbound._store(db, mail.sender, reply, direction="in", status="received")
+    for a in list(stored.attachments):
+        db.delete(a)
+    stored.waiver_id, stored.match_method = w.id, "thread"
+    db.commit()
+    db.expire_all()
+    assert db.get(Waiver, w.id).status == WaiverStatus.SENT
+    sid = stored.id
+    inbound.poll_all(db)
+    db.expire_all()
+    w = db.get(Waiver, w.id)
+    assert w.status == WaiverStatus.RECEIVED and w.signed_pdf_path
+    assert len(db.get(EmailMessage, sid).attachments) == 1
+    inbound.poll_all(db)  # nothing filed twice
+    assert [ev.action for ev in db.get(Waiver, w.id).events].count("received") == 1

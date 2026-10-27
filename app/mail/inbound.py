@@ -121,9 +121,72 @@ def poll_all(db: Session) -> dict:
             mb = db.get(Mailbox, mb.id)
             mb.last_error = f"Last mail check failed: {type(exc).__name__}: {exc}"[:500]
         db.commit()
+    try:
+        stats["filed"] = file_waiting_replies(db)
+        db.commit()
+    except Exception:
+        log.exception("mail.file_waiting_failed")
+        db.rollback()
     outbound.send_queued(db)
     db.commit()
     return stats
+
+
+def file_waiting_replies(db: Session, days: int = 45) -> int:
+    """Safety net: a reply tied to a waiver that's still waiting, with a PDF or image, gets
+    filed as the signed copy even if it wasn't when the mail first came in. A reply whose
+    attachments weren't saved has them downloaded again first."""
+    from datetime import timedelta
+
+    since = now() - timedelta(days=days)
+    filed = 0
+    rows = db.scalars(select(EmailMessage).join(Waiver, EmailMessage.waiver_id == Waiver.id).where(
+        EmailMessage.direction == "in", EmailMessage.is_auto_reply.is_(False), EmailMessage.kind == "inbound",
+        EmailMessage.found_in.is_(None), EmailMessage.received_at >= since,
+        Waiver.status.in_((WaiverStatus.SENT.value, WaiverStatus.REJECTED.value)))
+        .order_by(EmailMessage.id)).all()
+    for e in rows:
+        w = e.waiver
+        if w.status not in (WaiverStatus.SENT, WaiverStatus.REJECTED):
+            continue  # filed by an earlier reply in this loop
+        if w.status == WaiverStatus.REJECTED and w.received_at and e.received_at and \
+                _aware(e.received_at) <= _aware(w.received_at):
+            continue  # the copy that was rejected; wait for a new one
+        if not e.attachments:
+            _refetch_attachments(db, e)
+        if not any(a.is_pdf or a.is_image for a in e.attachments):
+            continue
+        with db.begin_nested():
+            if receive_waiver_copy(db, w, e, actor="system:mail"):
+                outbound.log_email(db, e, "system:mail", "filed_as_signed_copy", waiver_id=w.id)
+                filed += 1
+    return filed
+
+
+def _aware(d: datetime) -> datetime:
+    return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+
+
+def _refetch_attachments(db: Session, e: EmailMessage) -> None:
+    mb = db.get(Mailbox, e.mailbox_id) if e.mailbox_id else None
+    if mb is None or mb.status != "connected" or not e.provider_message_id:
+        return
+    try:
+        msg = mailboxes.provider_for(mb).get_message(e.provider_message_id)
+    except Exception as exc:
+        log.warning("mail.refetch_failed", email_id=e.id, error=str(exc)[:200])
+        return
+    if not msg.attachments:
+        return
+    folder = get_settings().data_dir / "emails" / str(e.id)
+    for i, a in enumerate(msg.attachments):
+        safe = "".join(ch for ch in Path(a.filename).name if ch.isalnum() or ch in "._- ")[-150:] or "attachment"
+        path = folder / f"{i}-{safe}"
+        filestore.write(db, path, a.data)
+        db.add(EmailAttachment(email_id=e.id, filename=a.filename[:500], content_type=(a.content_type or "")[:100] or None,
+                               size=a.size, path=str(path)))
+    db.flush()
+    db.refresh(e)
 
 
 MAX_RETRIES = 5
