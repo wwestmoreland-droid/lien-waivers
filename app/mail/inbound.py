@@ -24,7 +24,7 @@ from app.db.models import (
     Waiver,
 )
 from app.mail import mailboxes, outbound
-from app.mail.provider import CursorExpired, Incoming, TokenError
+from app.mail.provider import CursorExpired, Incoming, MessageGone, TokenError
 from app.services import filestore
 from app.services.reviews import upsert_review
 from app.smartsheet.sync import PUBLIC_MAIL_DOMAINS
@@ -103,42 +103,75 @@ CATCH_UP_DAYS = 14
 
 def poll_all(db: Session) -> dict:
     stats = {"mailboxes": 0, "new": 0, "kept": 0}
-    for mb in db.scalars(select(Mailbox).where(Mailbox.status == "connected",
-                                               Mailbox.role.in_(("sender", "listening", "readonly")))):
+    boxes = db.scalars(select(Mailbox).where(Mailbox.status == "connected",
+                                             Mailbox.role.in_(("sender", "listening", "readonly")))).all()
+    for mb in boxes:
         stats["mailboxes"] += 1
         try:
             new, kept = poll(db, mb)
             stats["new"] += new
             stats["kept"] += kept
+            mb.last_error = None
         except TokenError as exc:
             mailboxes.mark_broken(db, mb, str(exc))
+        except Exception as exc:  # noqa: BLE001
+            # One mailbox's problem never stops the others; it's shown on the Mailboxes page.
+            log.exception("mail.poll_failed", mailbox=mb.email)
+            db.rollback()
+            mb = db.get(Mailbox, mb.id)
+            mb.last_error = f"Last mail check failed: {type(exc).__name__}: {exc}"[:500]
         db.commit()
     outbound.send_queued(db)
     db.commit()
     return stats
 
 
+MAX_RETRIES = 5
+
+
 def poll(db: Session, mb: Mailbox) -> tuple[int, int]:
+    """Read new mail. Each message is handled on its own: a deleted draft or one odd message
+    never stops the rest, and the place in the mailbox is always saved."""
     provider = mailboxes.provider_for(mb)
+    catch_up = mb.last_polled_at is None
     try:
         ids, cursor = provider.changes_since(mb.history_id)
     except CursorExpired:
         log.warning("mail.cursor_expired", mailbox=mb.email)
         _, cursor = provider.changes_since(None)
-        ids = []
-    if mb.last_polled_at is None:
-        # First check after connecting: also look back, so mail that arrived while the
-        # mailbox wasn't connected isn't missed. Already-stored messages are skipped below.
+        ids, catch_up = [], True  # look back instead of skipping what we missed
+    if catch_up:
+        # After connecting (or a long gap): also look back, so nothing that arrived meanwhile
+        # is missed. Already-stored messages are skipped below.
         ids = [i for i in provider.recent_ids(CATCH_UP_DAYS) if i not in ids] + ids
+    retries = dict(mb.retry_ids or {})
+    ids = [i for i in retries if i not in ids] + ids
     kept = 0
     for mid in ids:
         if db.scalar(select(EmailMessage.id).where(EmailMessage.mailbox_id == mb.id,
                                                    EmailMessage.provider_message_id == mid)):
+            retries.pop(mid, None)
             continue
-        msg = provider.get_message(mid)
-        _log_contacts(db, mb, msg)
-        if process(db, mb, msg, provider):
-            kept += 1
+        try:
+            with db.begin_nested():
+                msg = provider.get_message(mid)
+                _log_contacts(db, mb, msg)
+                if process(db, mb, msg, provider):
+                    kept += 1
+            retries.pop(mid, None)
+        except MessageGone:
+            retries.pop(mid, None)  # deleted before we got to it (usually a draft)
+        except TokenError:
+            raise
+        except Exception as exc:
+            n = retries.get(mid, 0) + 1
+            log.exception("mail.message_failed", mailbox=mb.email, message=mid, attempt=n)
+            if n >= MAX_RETRIES:
+                retries.pop(mid, None)
+                mb.last_error = f"Skipped a message after {n} tries: {type(exc).__name__}: {exc}"[:500]
+            else:
+                retries[mid] = n
+    mb.retry_ids = retries or None
     mb.history_id = cursor
     mb.last_polled_at = now()
     return len(ids), kept
@@ -241,11 +274,14 @@ def _match(db: Session, mb: Mailbox, msg: Incoming, known: EmailMessage | None, 
 
 
 def _store(db: Session, mb: Mailbox, msg: Incoming, direction: str, status: str) -> EmailMessage:
+    def cut(s, n):
+        return s[:n] if s else s
     e = EmailMessage(
         mailbox_id=mb.id, direction=direction, kind="inbound" if direction == "in" else "free", status=status,
-        provider_message_id=msg.message_id, provider_thread_id=msg.thread_id, rfc_message_id=msg.rfc_message_id,
-        in_reply_to=msg.in_reply_to, references=msg.references, from_addr=msg.from_addr, from_name=msg.from_name,
-        to_addrs=msg.to, cc_addrs=msg.cc, subject=msg.subject, body_text=msg.body_text,
+        provider_message_id=msg.message_id, provider_thread_id=msg.thread_id,
+        rfc_message_id=cut(msg.rfc_message_id, 500), in_reply_to=cut(msg.in_reply_to, 500), references=msg.references,
+        from_addr=cut(msg.from_addr, 255), from_name=cut(msg.from_name, 255),
+        to_addrs=msg.to, cc_addrs=msg.cc, subject=cut(msg.subject, 1000), body_text=msg.body_text,
         received_at=msg.date or now(), sent_at=msg.date if direction == "out" else None,
     )
     m = TOKEN_RE.search(msg.subject or "")
@@ -256,14 +292,15 @@ def _store(db: Session, mb: Mailbox, msg: Incoming, direction: str, status: str)
     folder = get_settings().data_dir / "emails" / str(e.id)
     for a in msg.attachments:
         folder.mkdir(parents=True, exist_ok=True)
-        safe = "".join(ch for ch in Path(a.filename).name if ch.isalnum() or ch in "._- ") or "attachment"
+        safe = "".join(ch for ch in Path(a.filename).name if ch.isalnum() or ch in "._- ")[-150:] or "attachment"
         path = folder / safe
         i = 1
         while path.exists():
             path = folder / f"{i}-{safe}"
             i += 1
         filestore.write(db, path, a.data)
-        db.add(EmailAttachment(email_id=e.id, filename=a.filename, content_type=a.content_type, size=a.size,
+        db.add(EmailAttachment(email_id=e.id, filename=a.filename[:500], content_type=(a.content_type or "")[:100] or None,
+                               size=a.size,
                                path=str(path)))
     db.flush()
     db.refresh(e)

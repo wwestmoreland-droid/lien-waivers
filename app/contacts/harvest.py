@@ -322,7 +322,7 @@ def _apply_signature(db: Session, c: Contact, msg: Incoming, created: bool, budg
     previous = {k: getattr(c, k) for k in FIELDS if found.get(k) and getattr(c, k) and found[k] != getattr(c, k)}
     for k in FIELDS:
         if found.get(k):
-            setattr(c, k, found[k][:255])
+            setattr(c, k, found[k][:100 if k in ("phone", "mobile") else 255])
     if previous and c.status == "confirmed":
         c.previous = previous
         c.needs_review = True

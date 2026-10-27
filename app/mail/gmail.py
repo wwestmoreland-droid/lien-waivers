@@ -15,6 +15,7 @@ from app.config import get_settings
 from app.mail.provider import (
     CursorExpired,
     Incoming,
+    MessageGone,
     InAttachment,
     Outgoing,
     SentResult,
@@ -87,6 +88,8 @@ class GmailProvider:
                 continue
             if resp.status_code == 404 and path.startswith("/history"):
                 raise CursorExpired()
+            if resp.status_code == 404 and path.startswith("/messages/"):
+                raise MessageGone(path)
             resp.raise_for_status()
             return resp.json() if resp.content else {}
         resp.raise_for_status()
@@ -137,6 +140,8 @@ class GmailProvider:
             for h in data.get("history", []):
                 for added in h.get("messagesAdded", []):
                     mid = added["message"]["id"]
+                    if "DRAFT" in added["message"].get("labelIds", []):
+                        continue  # drafts are rewritten and deleted constantly; the sent copy comes later
                     if mid not in ids:
                         ids.append(mid)
             latest = str(data.get("historyId", latest))

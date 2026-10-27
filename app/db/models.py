@@ -457,6 +457,8 @@ class Mailbox(Base):
     label_id: Mapped[str | None] = mapped_column(String(100))
     last_polled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error: Mapped[str | None] = mapped_column(Text)
+    # Messages that failed to process, retried on the next checks: {message id: attempts}.
+    retry_ids: Mapped[dict | None] = mapped_column(JSON)
     connected_by: Mapped[str | None] = mapped_column(String(255))
     connected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 

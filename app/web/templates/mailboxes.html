@@ -27,6 +27,7 @@ A <strong>read-only source</strong> is only read (for contact logging and waiver
     </div>
     <div class="small muted">Connected {{ mb.connected_at|fdate }} by {{ mb.connected_by or '' }} · last checked {{ mb.last_polled_at|fdate or 'never' }}</div>
   </div>
+  {% if mb.status != 'broken' and mb.last_error %}<div class="warnbox">{{ mb.last_error }}</div>{% endif %}
   {% if mb.status == 'broken' %}<div class="warnbox">{{ mb.last_error or 'Google stopped accepting the sign-in.' }}
     {% if admin %}<a href="/settings/mailboxes/connect?role={{ 'readonly' if mb.role == 'readonly' else 'sender' }}&login_hint={{ mb.email }}">Reconnect</a>{% endif %}</div>{% endif %}
   {% if mb.role == 'listening' %}<div class="warnbox">This was the Sender. It keeps reading replies on threads it started.

@@ -329,3 +329,57 @@ def test_unsent_partial_follows_an_earlier_payment_recorded_later(mail):
     e = request_email(db, w)
     assert "$31,938.10" in e.subject and "$31,938.10 we've paid you" in e.body_text
     assert "($627.30)" in e.body_text  # this payment
+
+
+def test_deleted_draft_never_blocks_a_reply(mail):
+    """Your own drafts show up as new messages and are deleted when sent; reading one fails."""
+    db = mail.db
+    w, e = send_request(mail)
+    mail.box.order.append("draft-that-was-sent")  # listed by Gmail, gone when we fetch it
+    mail.box.deliver(from_addr="ap@deltafire.com", from_name="Dana AP", subject="Re: " + e.subject,
+                     thread_id=e.provider_thread_id, in_reply_to=e.rfc_message_id,
+                     attachments=[InAttachment("signed.pdf", "application/pdf", PDF)])
+    inbound.poll_all(db)
+    db.expire_all()
+    assert db.get(Waiver, w.id).status == WaiverStatus.RECEIVED
+    assert db.get(Mailbox, mail.sender.id).last_error is None
+
+
+def test_a_bad_message_is_retried_and_others_still_arrive(mail):
+    db = mail.db
+    w, e = send_request(mail)
+    odd = mail.box.deliver(from_addr="ap@deltafire.com", subject="Re: " + e.subject, thread_id=e.provider_thread_id)
+    mail.box.failing.add(odd.message_id)
+    reply = mail.box.deliver(from_addr="ap@deltafire.com", subject="Re: " + e.subject,
+                             thread_id=e.provider_thread_id, in_reply_to=e.rfc_message_id,
+                             attachments=[InAttachment("signed.pdf", "application/pdf", PDF)])
+    inbound.poll_all(db)
+    db.expire_all()
+    assert db.get(Waiver, w.id).status == WaiverStatus.RECEIVED
+    mb = db.get(Mailbox, mail.sender.id)
+    assert mb.retry_ids == {odd.message_id: 1}
+    mail.box.failing.clear()
+    inbound.poll_all(db)
+    db.expire_all()
+    assert db.get(Mailbox, mail.sender.id).retry_ids is None
+    assert db.scalar(select(EmailMessage).where(EmailMessage.provider_message_id == odd.message_id))
+    assert reply.message_id
+
+
+def test_one_broken_mailbox_doesnt_stop_the_others(mail, monkeypatch):
+    db = mail.db
+    ro = mailboxes.connect(db, "wwestmoreland@buildoutpros.com", "readonly", "r2", "gmail.readonly", "admin")
+    db.commit()
+    real = inbound.poll
+
+    def poll(db_, mb):
+        if mb.email == CONTRACTS:
+            raise RuntimeError("Gmail returned 500")
+        return real(db_, mb)
+    monkeypatch.setattr(inbound, "poll", poll)
+    box = FakeMailProvider.boxes["wwestmoreland@buildoutpros.com"]
+    box.deliver(from_addr="ar@ridgeplumbing.com", subject="Invoice", body="x", to=["ap@buildoutpros.com"])
+    inbound.poll_all(db)
+    db.expire_all()
+    assert "Gmail returned 500" in db.get(Mailbox, mail.sender.id).last_error
+    assert db.get(Mailbox, ro.id).last_polled_at is not None

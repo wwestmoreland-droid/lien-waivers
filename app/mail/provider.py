@@ -11,6 +11,10 @@ class TokenError(Exception):
     """The mailbox's sign-in no longer works (password change, access revoked)."""
 
 
+class MessageGone(Exception):
+    """The message was deleted before we read it (e.g. a draft that was sent or thrown away)."""
+
+
 class CursorExpired(Exception):
     """The provider can't list changes since the saved cursor; start again from now."""
 
