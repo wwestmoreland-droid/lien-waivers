@@ -79,7 +79,7 @@ class FakeMailProvider:
         pos = int(cursor) if cursor else len(self.box.order)
         return list(self.box.order[pos:]), str(len(self.box.order))
 
-    def get_message(self, message_id: str) -> Incoming:
+    def get_message(self, message_id: str, attachments: bool = True) -> Incoming:
         from app.mail.provider import MessageGone
         self._check()
         self.box.full_gets += 1
@@ -111,6 +111,9 @@ class FakeMailProvider:
         from dataclasses import replace
         self._check()
         self.box.metadata_gets += 1
+        if message_id not in self.box.messages:
+            from app.mail.provider import MessageGone
+            raise MessageGone(message_id)
         return replace(self.box.messages[message_id], body_text="", attachments=[])
 
     def list_page(self, query: str, page_token: str | None, size: int = 100) -> tuple[list[str], str | None, int]:

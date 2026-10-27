@@ -144,19 +144,27 @@ def poll(db: Session, mb: Mailbox) -> tuple[int, int]:
         # After connecting (or a long gap): also look back, so nothing that arrived meanwhile
         # is missed. Already-stored messages are skipped below.
         ids = [i for i in provider.recent_ids(CATCH_UP_DAYS) if i not in ids] + ids
+    from app.contacts import ai
+
     retries = dict(mb.retry_ids or {})
     ids = [i for i in retries if i not in ids] + ids
+    budget = ai.AiBudget(10)
     kept = 0
-    for mid in ids:
+    for n, mid in enumerate(ids, 1):
+        if n % 25 == 0:
+            db.commit()  # keep what's done if the app restarts partway through a long catch-up
         if db.scalar(select(EmailMessage.id).where(EmailMessage.mailbox_id == mb.id,
                                                    EmailMessage.provider_message_id == mid)):
             retries.pop(mid, None)
             continue
         try:
             with db.begin_nested():
-                msg = provider.get_message(mid)
-                _log_contacts(db, mb, msg)
-                if process(db, mb, msg, provider):
+                meta = provider.get_metadata(mid)
+                full = provider.get_message(mid) if worth_reading(db, mb, meta) else None
+                _log_contacts(db, mb, full or meta,
+                              fetch_body=lambda mid=mid: provider.get_message(mid, attachments=False),
+                              budget=budget)
+                if full is not None and process(db, mb, full, provider):
                     kept += 1
             retries.pop(mid, None)
         except MessageGone:
@@ -177,16 +185,34 @@ def poll(db: Session, mb: Mailbox) -> tuple[int, int]:
     return len(ids), kept
 
 
-def _log_contacts(db: Session, mb: Mailbox, msg: Incoming) -> None:
+def _log_contacts(db: Session, mb: Mailbox, msg: Incoming, fetch_body=None, budget=None) -> None:
     """Contact logging (section 6B) never gets in the way of handling the mail itself."""
     from app.contacts import ai
     from app.contacts.harvest import harvest
 
     try:
         with db.begin_nested():
-            harvest(db, mb, msg, budget=ai.AiBudget(3))
+            harvest(db, mb, msg, fetch_body=fetch_body, budget=budget or ai.AiBudget(3))
     except Exception:
         log.exception("contacts.harvest_failed", mailbox=mb.email, message=msg.message_id)
+
+
+def worth_reading(db: Session, mb: Mailbox, meta: Incoming) -> bool:
+    """From the headers alone: could this message be about a waiver? Only those are downloaded
+    in full, so a busy (or personal) mailbox stays quick to check."""
+    readonly = mb.role == "readonly"
+    if readonly and mb.only_to and mb.only_to.lower() not in meta.recipients_all:
+        return False
+    if TOKEN_RE.search(meta.subject or ""):
+        return True
+    if not readonly and _known_thread(db, mb, meta.thread_id) is not None:
+        return True
+    if "SENT" in meta.label_ids or meta.from_addr == mb.email:
+        return False
+    if not readonly and is_bounce(meta):
+        return True
+    vendor = vendor_for_address(db, meta.from_addr)
+    return vendor is not None and _vendor_on_tracked_project(db, vendor.id)
 
 
 def _known_thread(db: Session, mb: Mailbox, thread_id: str) -> EmailMessage | None:

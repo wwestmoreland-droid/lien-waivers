@@ -121,7 +121,8 @@ def run_slice(db: Session, bf: ContactBackfill, mb: Mailbox, budget: int = UNITS
             meta = provider.get_metadata(mid)
             used += COST_META
             before = stats.bodies
-            harvest(db, mb, meta, fetch_body=lambda mid=mid: provider.get_message(mid), budget=ai_budget,
+            harvest(db, mb, meta, fetch_body=lambda mid=mid: provider.get_message(mid, attachments=False),
+                    budget=ai_budget,
                     stats=stats)
             used += COST_FULL * (stats.bodies - before)
         bf.page_token = nxt

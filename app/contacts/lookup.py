@@ -62,7 +62,7 @@ def lookup_vendor(db: Session, v: Vendor) -> tuple[list[int], list[str]]:
             ids, _, _ = provider.list_page(q_mb, None, MAX_MESSAGES_PER_MAILBOX)
             for mid in ids:
                 meta = provider.get_metadata(mid)
-                for c in harvest(db, mb, meta, fetch_body=lambda mid=mid: provider.get_message(mid),
+                for c in harvest(db, mb, meta, fetch_body=lambda mid=mid: provider.get_message(mid, attachments=False),
                                  budget=budget, stats=stats):
                     found.add(c.id)
             # Also count contacts already logged from these messages earlier.

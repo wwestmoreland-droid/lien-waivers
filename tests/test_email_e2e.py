@@ -383,3 +383,20 @@ def test_one_broken_mailbox_doesnt_stop_the_others(mail, monkeypatch):
     db.expire_all()
     assert "Gmail returned 500" in db.get(Mailbox, mail.sender.id).last_error
     assert db.get(Mailbox, ro.id).last_polled_at is not None
+
+
+def test_busy_personal_sender_mailbox_only_downloads_waiver_mail(mail):
+    """Catching up on two weeks of someone's own mailbox reads headers, not every email."""
+    db = mail.db
+    w, e = send_request(mail)
+    for i in range(30):
+        mail.box.deliver(from_addr=f"friend{i}@example.com", subject=f"lunch {i}", body="see you",
+                         attachments=[InAttachment("photo.jpg", "image/jpeg", b"x" * 1000)])
+    mail.box.deliver(from_addr="ap@deltafire.com", subject="Re: " + e.subject, thread_id=e.provider_thread_id,
+                     in_reply_to=e.rfc_message_id, attachments=[InAttachment("signed.pdf", "application/pdf", PDF)])
+    db.get(Mailbox, mail.sender.id).last_polled_at = None  # first check: looks back two weeks
+    db.commit()
+    inbound.poll_all(db)
+    db.expire_all()
+    assert db.get(Waiver, w.id).status == WaiverStatus.RECEIVED
+    assert db.scalar(select(EmailMessage).where(EmailMessage.from_addr == "friend3@example.com")) is None

@@ -150,7 +150,7 @@ class GmailProvider:
                 break
         return ids, latest
 
-    def get_message(self, message_id: str) -> Incoming:
+    def get_message(self, message_id: str, attachments: bool = True) -> Incoming:
         data = self._call("GET", f"/messages/{message_id}", params={"format": "full"})
         payload = data.get("payload", {})
         headers = {h["name"].lower(): h["value"] for h in payload.get("headers", [])}
@@ -162,7 +162,9 @@ class GmailProvider:
             mime = part.get("mimeType", "")
             body = part.get("body", {})
             filename = part.get("filename") or ""
-            if filename:
+            if filename and not attachments:
+                pass  # only the text was asked for (e.g. to read a signature)
+            elif filename:
                 raw = body.get("data")
                 if not raw and body.get("attachmentId"):
                     raw = self._call("GET", f"/messages/{message_id}/attachments/{body['attachmentId']}")["data"]
