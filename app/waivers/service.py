@@ -512,3 +512,89 @@ def prepare_past(db: Session, payable_ids: list[int], actor: str) -> list[Waiver
         made.append(w)
     db.flush()
     return made
+
+
+# ---------------------------------------------------------------- signed waivers per job
+
+SIGNED_STATUSES = (WaiverStatus.RECEIVED.value, WaiverStatus.ACCEPTED.value)
+
+
+def best_signed_waiver(db: Session, sc: Subcontract) -> Waiver | None:
+    """The waiver that counts for a sub on a job: a signed unconditional final, else a signed
+    conditional final, else the most recent signed partial (latest through date)."""
+    signed = db.scalars(select(Waiver).where(Waiver.subcontract_id == sc.id, Waiver.status.in_(SIGNED_STATUSES),
+                                             Waiver.signed_pdf_path.is_not(None))).all()
+
+    def recent(w: Waiver):
+        return (w.through_date or date.min, w.payable.paid_date or date.min, w.received_at or now(), w.id)
+    for t in (WaiverType.UNCONDITIONAL_FINAL, WaiverType.CONDITIONAL_FINAL):
+        of_type = [w for w in signed if w.type == t.value]
+        if of_type:
+            return max(of_type, key=recent)
+    partials = [w for w in signed if w.type in [x.value for x in PARTIALS]]
+    return max(partials, key=recent) if partials else None
+
+
+def job_waiver_rows(db: Session, project: Project) -> list[dict]:
+    """Per sub on the job: their latest invoice and the signed waiver that counts."""
+    rows = []
+    subs = db.scalars(select(Subcontract).where(Subcontract.project_id == project.id,
+                                                Subcontract.deleted_in_source.is_(False))).all()
+    for sc in sorted(subs, key=lambda s: s.vendor.name.lower()):
+        pays = [p for p in sc.payables if not p.deleted_in_source
+                and (p.approval_status or "").strip().lower() != "rejected"]
+        latest = max(pays, key=order_key) if pays else None
+        rows.append({"sc": sc, "invoice": latest, "waiver": best_signed_waiver(db, sc)})
+    return rows
+
+
+def combined_signed_pdf(db: Session, waivers: list[Waiver]) -> bytes:
+    """One PDF with every waiver's signed copy, each starting on its own page. Scans sent as
+    images become a page each."""
+    import io
+
+    from pypdf import PdfReader, PdfWriter
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib.utils import ImageReader
+    from reportlab.pdfgen import canvas
+
+    def page_with(draw) -> PdfReader:
+        buf = io.BytesIO()
+        c = canvas.Canvas(buf, pagesize=letter)
+        draw(c)
+        c.showPage()
+        c.save()
+        return PdfReader(io.BytesIO(buf.getvalue()))
+
+    out = PdfWriter()
+    for w in waivers:
+        data = filestore.read(db, w.signed_pdf_path)
+        label = f"{w.subcontract.vendor.name}: {WaiverType(w.type).label} waiver #{w.id}"
+        reader = None
+        if data and data[:5] == b"%PDF-":
+            try:
+                reader = PdfReader(io.BytesIO(data))
+                _ = len(reader.pages)
+            except Exception:
+                reader = None
+        elif data:
+            try:
+                img = ImageReader(io.BytesIO(data))
+                iw, ih = img.getSize()
+                pw, ph = letter
+                scale = min((pw - 72) / iw, (ph - 72) / ih)
+                reader = page_with(lambda c: c.drawImage(img, (pw - iw * scale) / 2, (ph - ih * scale) / 2,
+                                                         iw * scale, ih * scale))
+            except Exception:
+                reader = None
+        if reader is None:
+            reader = page_with(lambda c: (c.setFont("Helvetica", 12),
+                                          c.drawString(72, 700, f"{label}: the signed copy couldn't be included."),
+                                          c.drawString(72, 680, "Open it from the waiver's page in the app.")))
+        start = len(out.pages)
+        for page in reader.pages:
+            out.add_page(page)
+        out.add_outline_item(label, start)
+    buf = io.BytesIO()
+    out.write(buf)
+    return buf.getvalue()

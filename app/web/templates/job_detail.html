@@ -7,11 +7,34 @@
     <p class="sub">{{ p.number }} · {{ p.client_company or 'No client' }} · {{ p.state or '' }} · {{ p.status or '' }}{% if p.pm_name %} · PM {{ p.pm_name }}{% endif %}<br>
     {{ p.address or '' }}</p>
   </div>
-  <div class="row-actions"><a class="btn" href="/reports/ctc.csv?project={{ p.number }}">CSV</a><a class="btn" href="/reports/ctc.xlsx?project={{ p.number }}">XLSX</a></div>
+  <div class="row-actions">
+    {% if waiver_rows|selectattr('waiver')|list %}<a class="btn primary" href="/jobs/{{ p.number }}/signed-waivers.pdf">Download all signed waivers (PDF)</a>{% endif %}
+    <a class="btn" href="/reports/ctc.csv?project={{ p.number }}">CSV</a><a class="btn" href="/reports/ctc.xlsx?project={{ p.number }}">XLSX</a></div>
 </div>
 {% if not p.is_tracked %}<div class="warnbox">This project is not tracked. Data shown is from when it was.</div>{% endif %}
 
 {% with show_project=false %}{% include "partials/ctc_rows.html" %}{% endwith %}
+
+<h2 id="waivers">Signed waivers by sub</h2>
+<p class="small muted">For each sub: their latest invoice, and the signed waiver that counts: the unconditional final if there is one, otherwise the conditional final, otherwise the most recent partial. "Download all" puts these in one PDF, each starting on its own page.</p>
+<div class="table-wrap"><table>
+  <tr><th>Sub</th><th>Latest invoice</th><th>Signed waiver on file</th><th></th></tr>
+  {% for r in waiver_rows %}
+  {% set w = r.waiver %}{% set i = r.invoice %}
+  <tr>
+    <td><a href="/subs/{{ r.sc.id }}">{{ r.sc.vendor.name }}</a></td>
+    <td class="small">{% if i %}{{ i.invoice_no or '(no number)' }} · {{ i.amount|money }}
+      <span class="muted">· {{ 'paid ' ~ (i.paid_date|fdate) if i.paid_date else (i.approval_status or 'not approved') }}</span>{% else %}<span class="muted">none yet</span>{% endif %}</td>
+    <td>{% if w %}<a href="/waivers/{{ w.id }}/signed" target="_blank">{{ WaiverType(w.type).label }}</a>
+      <span class="small">{% if w.amount is not none %}· {{ w.amount|money }}{% endif %}{% if not WaiverType(w.type).is_final and w.through_date %} · through {{ w.through_date|fdate }}{% endif %}</span>
+      {% if w.status == 'received' %}<span class="badge warn">not reviewed yet</span>{% else %}<span class="badge ok">accepted</span>{% endif %}
+      {% else %}<span class="muted small">none signed yet</span>{% endif %}</td>
+    <td>{% if w %}<a class="small" href="/waivers/{{ w.id }}">details</a>{% endif %}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="4" class="muted">No subcontracts on this job.</td></tr>
+  {% endfor %}
+</table></div>
 
 {% if unmatched %}
 <h2>Unmatched payables on this job</h2>

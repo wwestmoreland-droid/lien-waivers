@@ -157,7 +157,20 @@ def job_detail(request: Request, number: str, db: Session = Depends(get_db), use
                                               Payable.match_status == "direct_purchase",
                                               Payable.deleted_in_source.is_(False))).all()
     return render(request, "job_detail.html", user, p=p, rows=rows, unmatched=unmatched, direct=direct,
+                  waiver_rows=waiver_service.job_waiver_rows(db, p),
                   totals={f: sum((getattr(r, f) for r in rows), report.ZERO) for f in report.MONEY_FIELDS})
+
+
+@router.get("/jobs/{number}/signed-waivers.pdf")
+def job_signed_waivers(number: str, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    p = _project(db, number)
+    waivers = [r["waiver"] for r in waiver_service.job_waiver_rows(db, p) if r["waiver"]]
+    if not waivers:
+        raise HTTPException(404, "No signed waivers on this job yet.")
+    data = waiver_service.combined_signed_pdf(db, waivers)
+    name = f"Signed lien waivers {p.number}.pdf"
+    return Response(data, media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
 @router.get("/subs/{sc_id}", response_class=HTMLResponse)

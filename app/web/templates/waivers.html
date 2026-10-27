@@ -46,7 +46,8 @@
     <td><span class="badge {{ sbadge.get(w.status, '') }}">{{ 'cancelled' if w.status == 'void' else w.status|replace('_', ' ') }}</span>
       {% if w.review_reason %}<div class="small" style="color:var(--bad)">{{ w.review_reason }}</div>{% endif %}</td>
     <td class="small">{{ w.created_at|fdate }}</td>
-    <td>{% if w.generated_pdf_path %}<a class="btn sm" href="/waivers/{{ w.id }}/pdf" target="_blank">PDF</a>{% endif %}</td>
+    <td style="white-space:nowrap">{% if w.signed_pdf_path %}<a class="btn sm primary" href="/waivers/{{ w.id }}/signed" target="_blank">Signed</a>
+      {% elif w.generated_pdf_path %}<a class="btn sm" href="/waivers/{{ w.id }}/pdf" target="_blank">PDF</a>{% endif %}</td>
   </tr>
   {% else %}
   <tr><td colspan="11" class="muted">No waivers here.</td></tr>
