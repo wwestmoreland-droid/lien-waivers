@@ -30,7 +30,7 @@
   <div class="row-actions" style="margin-top:12px">
     <button class="btn primary" name="action" value="send">Send</button>
     <button class="btn" name="action" value="save">Save draft</button>
-    <button class="btn danger" name="action" value="discard" onclick="return confirm('Discard this draft?')">Discard</button>
+    <button class="btn danger" name="action" value="discard" onclick="return confirm('Discard this draft?{% if e.kind == 'waiver_request' %} The waiver stays a draft and a new request is drafted on the next sync; to stop it for good, cancel the waiver instead.{% endif %}')">Discard</button>
   </div>
   {% endif %}
 </form>

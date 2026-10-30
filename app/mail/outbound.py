@@ -368,8 +368,11 @@ def ensure_request_drafts(db: Session) -> int:
     n = 0
     for w in db.scalars(select(Waiver).join(Subcontract).join(Project).where(
             Project.is_tracked.is_(True), Waiver.status == WaiverStatus.DRAFT.value)):
+        # A waiver that's still a draft needs a request to send. If the last one was discarded,
+        # draft it again (to stop it for good, cancel the waiver instead).
         if not db.scalar(select(EmailMessage.id).where(EmailMessage.waiver_id == w.id,
-                                                       EmailMessage.kind == "waiver_request")):
-            queue_waiver_request(db, w)
+                                                       EmailMessage.kind == "waiver_request",
+                                                       EmailMessage.status != "discarded")):
+            queue_waiver_request(db, w, fresh=True)
             n += 1
     return n

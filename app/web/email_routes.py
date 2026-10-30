@@ -98,9 +98,11 @@ def email_center(request: Request, view: str = "inbox", project: str = "", vendo
         query = query.where(EmailMessage.direction == "out", EmailMessage.status.in_(("draft", "queued", "failed")))
     elif view == "sent":
         query = query.where(EmailMessage.direction == "out", EmailMessage.status.in_(("sent", "bounced")))
+    elif view == "other":
+        query = query.where(EmailMessage.direction == "in", EmailMessage.kind == "other")
     else:
         view = "inbox"
-        query = query.where(EmailMessage.direction == "in")
+        query = query.where(EmailMessage.direction == "in", EmailMessage.kind != "other")
     if project:
         query = query.where(EmailMessage.project_number == project)
     if vendor:
@@ -123,6 +125,8 @@ def email_center(request: Request, view: str = "inbox", project: str = "", vendo
             EmailMessage.direction == "out", EmailMessage.status.in_(("draft", "queued", "failed")))) or 0,
         "unmatched": db.scalar(select(func.count(EmailMessage.id)).where(
             EmailMessage.direction == "in", EmailMessage.waiver_id.is_(None), EmailMessage.kind == "inbound")) or 0,
+        "other": db.scalar(select(func.count(EmailMessage.id)).where(
+            EmailMessage.direction == "in", EmailMessage.kind == "other")) or 0,
     }
     projects = db.scalars(select(Project).where(Project.is_tracked.is_(True)).order_by(Project.number)).all()
     # No DISTINCT over vendors: Postgres can't compare their JSON column.

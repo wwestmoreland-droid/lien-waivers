@@ -69,8 +69,11 @@ def looks_like_waiver_file(name: str) -> bool:
 # ---------------------------------------------------------------- vendor lookup
 
 def vendor_for_address(db: Session, addr: str) -> Vendor | None:
-    """Exact known address first, then a company domain known for the vendor."""
+    """Exact known address first, then a company domain known for the vendor. Our own people
+    are never a vendor, even when Smartsheet lists them in a sub's PM column."""
     addr = addr.lower()
+    if _domain(addr) == INTERNAL_DOMAIN:
+        return None
     from sqlalchemy import or_
     sc = db.scalar(select(Subcontract).where(or_(
         Subcontract.billing_email == addr, Subcontract.pm_email == addr,
@@ -122,6 +125,12 @@ def poll_all(db: Session) -> dict:
             mb.last_error = f"Last mail check failed: {type(exc).__name__}: {exc}"[:500]
         db.commit()
     try:
+        stats["set_aside"] = tidy_inbox(db)
+        db.commit()
+    except Exception:
+        log.exception("mail.tidy_failed")
+        db.rollback()
+    try:
         stats["filed"] = file_waiting_replies(db)
         db.commit()
     except Exception:
@@ -130,6 +139,30 @@ def poll_all(db: Session) -> dict:
     outbound.send_queued(db)
     db.commit()
     return stats
+
+
+def tidy_inbox(db: Session) -> int:
+    """Set aside stored mail that isn't about a waiver (kept under the older, wider rule): kind
+    becomes "other", which the Inbox hides. Nothing is deleted; it's one click to see it."""
+    n = 0
+    for e in db.scalars(select(EmailMessage).where(EmailMessage.direction == "in", EmailMessage.kind == "inbound",
+                                                   EmailMessage.waiver_id.is_(None),
+                                                   EmailMessage.found_in.is_(None))).all():
+        if e.from_addr and _domain(e.from_addr) == INTERNAL_DOMAIN:
+            e.vendor_id = None
+        mb = db.get(Mailbox, e.mailbox_id) if e.mailbox_id else None
+        names = " ".join(a.filename for a in e.attachments)
+        if TOKEN_RE.search(e.subject or "") or WAIVER_WORDS.search((e.subject or "") + " " + names):
+            continue
+        if mb is not None and e.provider_thread_id and db.scalar(select(EmailMessage.id).where(
+                EmailMessage.mailbox_id == mb.id, EmailMessage.provider_thread_id == e.provider_thread_id,
+                EmailMessage.direction == "out", EmailMessage.waiver_id.is_not(None)).limit(1)):
+            continue  # a reply in one of our waiver threads
+        if e.vendor_id and e.attachments and open_waivers_for_vendor(db, e.vendor_id):
+            continue  # files from a sub that owes us a waiver: could be the signed copy
+        e.kind = "other"
+        n += 1
+    return n
 
 
 def file_waiting_replies(db: Session, days: int = 45) -> int:
@@ -224,7 +257,11 @@ def poll(db: Session, mb: Mailbox) -> tuple[int, int]:
             with db.begin_nested():
                 meta = provider.get_metadata(mid)
                 full = provider.get_message(mid) if worth_reading(db, mb, meta) else None
-                _log_contacts(db, mb, full or meta,
+                text = full
+                if text is None and wanted_for_contacts(db, mb, meta):
+                    # A vendor's own mail: read the text (no attachments) to keep their contact details current.
+                    text = provider.get_message(mid, attachments=False)
+                _log_contacts(db, mb, text or meta,
                               fetch_body=lambda mid=mid: provider.get_message(mid, attachments=False),
                               budget=budget)
                 if full is not None and process(db, mb, full, provider):
@@ -260,6 +297,14 @@ def _log_contacts(db: Session, mb: Mailbox, msg: Incoming, fetch_body=None, budg
         log.exception("contacts.harvest_failed", mailbox=mb.email, message=msg.message_id)
 
 
+def wanted_for_contacts(db: Session, mb: Mailbox, meta: Incoming) -> bool:
+    if mb.role == "readonly" and mb.only_to and mb.only_to.lower() not in meta.recipients_all:
+        return False
+    if "SENT" in meta.label_ids or meta.from_addr == mb.email:
+        return False
+    return vendor_for_address(db, meta.from_addr) is not None
+
+
 def worth_reading(db: Session, mb: Mailbox, meta: Incoming) -> bool:
     """From the headers alone: could this message be about a waiver? Only those are downloaded
     in full, so a busy (or personal) mailbox stays quick to check."""
@@ -275,7 +320,10 @@ def worth_reading(db: Session, mb: Mailbox, meta: Incoming) -> bool:
     if not readonly and is_bounce(meta):
         return True
     vendor = vendor_for_address(db, meta.from_addr)
-    return vendor is not None and _vendor_on_tracked_project(db, vendor.id)
+    if vendor is None or not _vendor_on_tracked_project(db, vendor.id):
+        return False
+    # Attachment names aren't in the headers, so a sub that owes us a waiver is read in full.
+    return bool(WAIVER_WORDS.search(meta.subject or "")) or bool(open_waivers_for_vendor(db, vendor.id))
 
 
 def _known_thread(db: Session, mb: Mailbox, thread_id: str) -> EmailMessage | None:
@@ -311,8 +359,10 @@ def process(db: Session, mb: Mailbox, msg: Incoming, provider=None) -> EmailMess
     if readonly:
         keep = bool(token) or (tracked_vendor and has_files and waiverish)
     else:
+        # A sub's everyday mail (RFIs, drawings, invoices) stays in Gmail. Kept: waiver threads, [LW-]
+        # tags, bounces, mail that talks about a waiver, and files from a sub that owes us one.
         keep = known is not None or bool(token) or bounce and _bounce_original(db, mb, msg) is not None \
-            or (tracked_vendor and (has_files or waiverish))
+            or (tracked_vendor and (waiverish or (has_files and bool(open_waivers_for_vendor(db, vendor.id)))))
     if not keep:
         return None
 

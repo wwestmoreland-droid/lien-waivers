@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import select
 
-from app.db.models import EmailMessage, Mailbox, Payable, Project, ReviewItem, Waiver
+from app.db.models import EmailMessage, Mailbox, Payable, Project, ReviewItem, Subcontract, Waiver
 from app.mail import inbound, mailboxes, outbound, reminders, verify
 from app.mail.fake import FakeMailProvider
 from app.mail.provider import InAttachment
@@ -425,3 +425,50 @@ def test_reply_that_wasnt_filed_is_filed_later(mail):
     assert len(db.get(EmailMessage, sid).attachments) == 1
     inbound.poll_all(db)  # nothing filed twice
     assert [ev.action for ev in db.get(Waiver, w.id).events].count("received") == 1
+
+
+def test_inbox_keeps_only_waiver_mail(mail):
+    db = mail.db
+    w, e = send_request(mail)  # Delta Fire owes us this waiver
+    pdf = [InAttachment("drawing.pdf", "application/pdf", PDF)]
+    # Ridge owes nothing: their RFI with drawings stays in Gmail.
+    mail.box.deliver(from_addr="billing@ridgeplumbing.com", subject="RFI 12 - restroom", attachments=pdf)
+    # Our own PM, even if Smartsheet lists them on a sub: never the sub.
+    sc = w.subcontract
+    sc.pm_email = "npigott@buildoutpros.com"
+    db.commit()
+    mail.box.deliver(from_addr="npigott@buildoutpros.com", subject="Re: RFI", attachments=pdf)
+    # Ridge mentioning a waiver is kept; Delta's file (they owe one) is kept.
+    mail.box.deliver(from_addr="billing@ridgeplumbing.com", subject="Lien waiver question")
+    mail.box.deliver(from_addr="ap@deltafire.com", subject="scan", attachments=pdf)
+    inbound.poll_all(db)
+    subjects = {m.subject for m in db.scalars(select(EmailMessage).where(EmailMessage.direction == "in"))}
+    assert subjects == {"Lien waiver question", "scan"}
+
+
+def test_old_non_waiver_mail_is_set_aside(mail):
+    db = mail.db
+    rfi = mail.box.deliver(from_addr="billing@ridgeplumbing.com", subject="RFI 12",
+                           attachments=[InAttachment("dwg.pdf", "application/pdf", PDF)])
+    e = inbound._store(db, mail.sender, rfi, direction="in", status="received")  # kept by the old rule
+    e.vendor_id = db.scalar(select(Subcontract).where(Subcontract.source_row_id == 102)).vendor_id
+    db.commit()
+    inbound.poll_all(db)
+    db.expire_all()
+    assert db.get(EmailMessage, e.id).kind == "other"
+    from fastapi.testclient import TestClient
+    from app.main import create_app
+    with TestClient(create_app()) as c:
+        assert "RFI 12" not in c.get("/email").text
+        assert "RFI 12" in c.get("/email?view=other").text
+
+
+def test_discarded_request_is_drafted_again(mail):
+    db = mail.db
+    w = pay(mail)
+    e = request_email(db, w)
+    e.status = "discarded"
+    db.commit()
+    run_sync(db, mail.source, trigger="test")
+    drafts = db.scalars(select(EmailMessage).where(EmailMessage.waiver_id == w.id, EmailMessage.status == "draft")).all()
+    assert len(drafts) == 1 and drafts[0].id != e.id

@@ -6,7 +6,9 @@
   <div>
     <h1>Email</h1>
     <p class="sub">{% if sender %}Sending from {{ sender.email }}.{% else %}<strong>No Sender mailbox connected.</strong> <a href="/settings/mailboxes">Connect one</a>.{% endif %}
-      Waiver and supplier mail only; <a href="/email/all">see all {{ sender.email if sender else 'mailbox' }} mail</a>.</p>
+      This is only for lien waiver mail: replies to waiver requests, signed copies, bounces, and anything mentioning a waiver.
+      A sub's other mail (RFIs, drawings, invoices) stays in Gmail; <a href="/email/all">see all {{ sender.email if sender else 'mailbox' }} mail</a>.
+      "Unmatched" means waiver mail the app couldn't tie to one waiver: open it and link it.</p>
   </div>
   <div class="row-actions">
     {% if editor %}<form class="inline" method="post" action="/mail/check-now"><button class="btn">Check mail now</button></form>
@@ -20,6 +22,7 @@
   <a href="/email?view=inbox" class="{{ 'on' if view == 'inbox' }}">Inbox{% if counts.unmatched %} ({{ counts.unmatched }} unmatched){% endif %}</a>
   <a href="/email?view=outbox" class="{{ 'on' if view == 'outbox' }}">Outbox ({{ counts.outbox }})</a>
   <a href="/email?view=sent" class="{{ 'on' if view == 'sent' }}">Sent</a>
+  {% if counts.other %}<a href="/email?view=other" class="{{ 'on' if view == 'other' }}">Not about waivers ({{ counts.other }})</a>{% endif %}
 </div>
 
 <form class="filters" method="get">
