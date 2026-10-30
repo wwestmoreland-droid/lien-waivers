@@ -37,13 +37,14 @@ def _pending(db: Session, w: Waiver, kind: str) -> bool:
 
 def run(db: Session, today: date | None = None) -> dict:
     today = today or datetime.now(ZoneInfo(get_settings().timezone)).date()
-    stats = {"reminder_1": 0, "reminder_2": 0, "escalation": 0}
+    stats = {"reminder_1": 0, "reminder_2": 0, "escalation": 0, "supplier_list_reminder": 0}
     if today.weekday() >= 5:  # Saturday or Sunday
         return stats
     reminder_days = sorted(int(d) for d in get_setting(db, "reminder_days"))[:2]
     escalation_day = int(get_setting(db, "escalation_day"))
     waivers = db.scalars(select(Waiver).join(Subcontract).join(Project).where(
-        Project.is_tracked.is_(True), Waiver.status == WaiverStatus.SENT.value, Waiver.sent_at.is_not(None)))
+        Project.is_tracked.is_(True), Waiver.status == WaiverStatus.SENT.value, Waiver.sent_at.is_not(None),
+        Waiver.supplier_id.is_(None)))
     for w in waivers:
         age = (today - _local_date(w.sent_at)).days
         root = outbound.thread_root(db, w)
@@ -63,5 +64,34 @@ def run(db: Session, today: date | None = None) -> dict:
                 e = outbound.draft_reply(db, root, kind, attach_waiver=(n == 1))
                 outbound.maybe_auto_send(db, e)
                 stats[kind] += 1
+    stats["supplier_list_reminder"] = _supplier_list_reminders(db, today, reminder_days)
     db.flush()
     return stats
+
+
+def _supplier_list_reminders(db: Session, today: date, reminder_days: list[int]) -> int:
+    """Same schedule for a supplier list that hasn't come back: a reminder in the request's thread."""
+    from decimal import Decimal
+
+    from app.mail import templates
+
+    n = 0
+    for sc in db.scalars(select(Subcontract).join(Project).where(
+            Project.is_tracked.is_(True), Subcontract.supplier_list_status == "requested")):
+        root = db.scalar(select(EmailMessage).where(EmailMessage.token == f"SD-{sc.id}", EmailMessage.kind == "supplier_list",
+                                                    EmailMessage.status == "sent").order_by(EmailMessage.id))
+        if root is None or not root.sent_at:
+            continue
+        age = (today - _local_date(root.sent_at)).days
+        done = sc.supplier_list_reminders or 0
+        due = [d for d in reminder_days if age >= d]
+        pending = db.scalar(select(EmailMessage.id).where(EmailMessage.token == f"SD-{sc.id}",
+                                                          EmailMessage.kind == "supplier_list_reminder",
+                                                          EmailMessage.status.in_(("draft", "queued"))))
+        if len(due) > done and not pending:
+            values = {"first_name": templates.first_name(sc.billing_name), "project_name": sc.project.name or sc.project.number,
+                      "supplier_min": f"${Decimal(str(get_setting(db, 'supplier_min'))):,.0f}"}
+            e = outbound.draft_reply(db, root, "supplier_list_reminder", values=values)
+            outbound.maybe_auto_send(db, e)
+            n += 1
+    return n

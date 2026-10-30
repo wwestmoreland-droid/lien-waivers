@@ -315,8 +315,11 @@ def test_send_and_send_all_from_today(client, db, source, mailing):
     service.prepare_past(db, ready, "ap")
     db.commit()
     assert len(ready) >= 2
+    from app.services import today
+    n = len([t for t in today.ready_to_send(db) if t.sendable])  # the requests, plus any supplier-list requests
+    assert n >= len(ready)
     r = client.post("/today/send-all")
-    assert f"Sent {len(ready)}." in r.text and len(mailing.sent) == 1 + len(ready) and "All sent." in r.text
+    assert f"Sent {n}." in r.text and len(mailing.sent) == 1 + n
 
 
 def test_cant_send_shows_the_reason(client, db, source, mailing):
@@ -328,7 +331,7 @@ def test_cant_send_shows_the_reason(client, db, source, mailing):
     r = client.get("/")
     assert "No email address for this sub." in r.text and ">Fix<" in r.text
     client.post("/today/send-all")
-    assert mailing.sent == []
+    assert not [m for m in mailing.sent if "Lien waiver" in m.subject]
 
 
 def test_accept_and_send_back_from_today(client, db, source, mailing):

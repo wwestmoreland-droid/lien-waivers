@@ -213,8 +213,18 @@ def quick_questions(db: Session, user) -> list[Question]:
         if r.ref_type == "payable":
             p = db.get(Payable, r.ref_id)
             url = f"/subs/{p.subcontract_id}" if p and p.subcontract_id else "/queues#review"
-        qs.append(Question("review", _review_sentence(r), r.kind in ("hold", "final_exceptions", "email_bounced"),
+        qs.append(Question("review", _review_sentence(r), r.kind in ("hold", "final_exceptions", "email_bounced",
+                                                                     "missing_supplier_waivers"),
                            url, r))
+
+    # Suppliers read from a sub's emailed list.
+    from app.db.models import SupplierCandidate
+    for c in db.scalars(select(SupplierCandidate).join(Subcontract).join(Project).where(
+            SupplierCandidate.status == "pending", Project.is_tracked.is_(True)).order_by(SupplierCandidate.id)):
+        bits = ", ".join(x for x in (c.supplies, f"~${c.approx_amount:,.0f}" if c.approx_amount else None) if x)
+        qs.append(Question("candidate", f"{e(c.subcontract.vendor.name)} lists <strong>{e(c.name)}</strong>"
+                                        f"{' (' + e(bits) + ')' if bits else ''}. Add as their supplier?", False,
+                           f"/jobs/{c.subcontract.project.number}#waivers", c))
 
     # New contacts (Admin/AP only).
     if user.role in EDITORS:
@@ -283,6 +293,22 @@ def next_step(db: Session, w: Waiver, today: date | None = None) -> str:
     if not w.escalated_at:
         return f"PM gets flagged {_when(_due(sent, esc), today)}"
     return "PM has been flagged."
+
+
+def waiting_lists(db: Session) -> list[Subcontract]:
+    """Supplier lists asked for and not back yet."""
+    return list(db.scalars(select(Subcontract).join(Project).where(
+        Project.is_tracked.is_(True), Subcontract.supplier_list_status == "requested",
+        Subcontract.supplier_list_requested_at.is_not(None)).order_by(Subcontract.supplier_list_requested_at)))
+
+
+def list_next_step(db: Session, sc: Subcontract, today: date | None = None) -> str:
+    today = today or local_today()
+    days = sorted(int(d) for d in get_setting(db, "reminder_days"))[:2]
+    done = sc.supplier_list_reminders or 0
+    if done < len(days):
+        return f"{['First', 'Second'][done]} reminder {_when(_due(_local(sc.supplier_list_requested_at), days[done]), today)}"
+    return "Both reminders sent."
 
 
 def waiting_on_subs(db: Session) -> list[Waiver]:

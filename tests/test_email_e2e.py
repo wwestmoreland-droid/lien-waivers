@@ -187,7 +187,8 @@ def test_reminders_and_escalation(mail):
     w.sent_at = datetime(2026, 10, 1, 15, tzinfo=timezone.utc)  # Thursday
     db.commit()
     # Day 7 = Thursday Oct 8: first reminder, not before.
-    assert reminders.run(db, date(2026, 10, 7)) == {"reminder_1": 0, "reminder_2": 0, "escalation": 0}
+    assert reminders.run(db, date(2026, 10, 7)) == {"reminder_1": 0, "reminder_2": 0, "escalation": 0,
+                                                    "supplier_list_reminder": 0}
     reminders.run(db, date(2026, 10, 8))
     r1 = db.scalar(select(EmailMessage).where(EmailMessage.kind == "reminder_1"))
     assert r1.provider_thread_id == e.provider_thread_id and r1.attachments and "attached again" in r1.body_text
@@ -293,7 +294,8 @@ def test_no_reminders_on_weekends(mail):
     w, e = send_request(mail)
     w.sent_at = datetime(2026, 9, 26, 15, tzinfo=timezone.utc)  # Saturday; day 7 is Saturday Oct 3
     db.commit()
-    assert reminders.run(db, date(2026, 10, 3)) == {"reminder_1": 0, "reminder_2": 0, "escalation": 0}
+    assert reminders.run(db, date(2026, 10, 3)) == {"reminder_1": 0, "reminder_2": 0, "escalation": 0,
+                                                    "supplier_list_reminder": 0}
     assert reminders.run(db, date(2026, 10, 4))["reminder_1"] == 0  # Sunday
     assert reminders.run(db, date(2026, 10, 5))["reminder_1"] == 1  # Monday picks it up
 

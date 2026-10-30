@@ -47,7 +47,8 @@
   {% for w in signed %}{% set ok, words = check(w) %}
   <div class="item">
     <div class="item-main">
-      <div><strong>{{ w.subcontract.vendor.name }}</strong> <span class="pill">{{ WaiverType(w.type).label }}</span></div>
+      {% if w.supplier_id %}<div><strong>Supplier waiver: {{ w.supplier.name }}</strong> <span class="small muted">(for {{ w.subcontract.vendor.name }})</span> <span class="pill">{{ WaiverType(w.type).label }}</span></div>
+      {% else %}<div><strong>{{ w.subcontract.vendor.name }}</strong> <span class="pill">{{ WaiverType(w.type).label }}</span></div>{% endif %}
       <div class="small muted">{{ w.subcontract.project.number }} {{ w.subcontract.project.name or '' }}{% if w.amount is not none %} · {{ w.amount|money }}{% endif %}</div>
       <div class="small">{% if ok %}<strong class="ok-t">Looks right:</strong>{% elif ok is false %}<strong class="bad-t">Problem:</strong>{% endif %} {{ words }}</div>
     </div>
@@ -117,6 +118,9 @@
         <form method="post" action="/contacts/{{ o.id }}"><input type="hidden" name="back" value="{{ back }}"><input type="hidden" name="action" value="confirm">
           <input type="hidden" name="vendor_id" value="{{ o.vendor_id }}"><input type="hidden" name="role" value="{{ o.role or '' }}"><button class="btn primary">Yes</button></form>
         <form method="post" action="/contacts/{{ o.id }}"><input type="hidden" name="back" value="{{ back }}"><input type="hidden" name="action" value="ignore"><button class="btn">Ignore</button></form>
+      {% elif q.kind == 'candidate' %}
+        <form method="post" action="/supplier-candidates/{{ o.id }}/yes"><input type="hidden" name="back" value="{{ back }}"><button class="btn primary">Yes</button></form>
+        <form method="post" action="/supplier-candidates/{{ o.id }}/no"><input type="hidden" name="back" value="{{ back }}"><button class="btn">No</button></form>
       {% elif q.kind == 'mail' %}
         <a class="btn primary" href="{{ q.more_url }}">Open and link</a>
       {% elif q.kind == 'open' %}
@@ -132,7 +136,7 @@
 
 {# ------------------------------------------------------------ 4. Waiting on subs #}
 <section class="today" id="waiting">
-  <div class="sec-head"><h2>Waiting on subs <span class="count">{{ waiting|length }}</span></h2></div>
+  <div class="sec-head"><h2>Waiting on subs <span class="count">{{ waiting|length + lists|length }}</span></h2></div>
   <p class="sec-note">Nothing to do. Reminders go out on their own.</p>
   {% for w in waiting %}
   <div class="item {{ 'more-row' if loop.index > 5 }}">
@@ -148,7 +152,16 @@
     </div>
   </div>
   {% else %}
-  <div class="empty">Nobody owes us a waiver right now.</div>
+  {% if not lists %}<div class="empty">Nobody owes us a waiver right now.</div>{% endif %}
+  {% endfor %}
+  {% for sc in lists %}
+  <div class="item">
+    <div class="item-main">
+      <div><strong>{{ sc.vendor.name }}</strong> <span class="pill">Supplier list</span></div>
+      <div class="small muted">{{ sc.project.number }} · Asked {{ (today - sc.supplier_list_requested_at.date()).days }} day{{ 's' if (today - sc.supplier_list_requested_at.date()).days != 1 }} ago</div>
+      <div class="small">{{ list_next(sc) }}</div>
+    </div>
+  </div>
   {% endfor %}
   {% if waiting|length > 5 %}<a href="#" class="small" onclick="document.getElementById('waiting').classList.add('show-all');this.remove();return false">Show all {{ waiting|length }}</a>{% endif %}
 </section>

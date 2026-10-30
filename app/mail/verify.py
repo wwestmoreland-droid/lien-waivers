@@ -111,6 +111,21 @@ def compare(w: Waiver, found: dict, notary_required: bool = True) -> list[str]:
     return problems
 
 
+def compare_supplier(sub_waiver: Waiver, found: dict, notary_required: bool = True) -> list[str]:
+    """A supplier's waiver that came with the sub's: signed, notarized, and through the same date."""
+    problems = []
+    if not found.get("appears_signed"):
+        problems.append("it isn't signed")
+    if notary_required and not found.get("notary_completed"):
+        problems.append("the notary section is blank")
+    if sub_waiver.through_date and found.get("through_date") and found.get("waiver_type") in (
+            "conditional_partial", "unconditional_partial") and found["through_date"] != sub_waiver.through_date.isoformat():
+        problems.append(f"the date should be {sub_waiver.through_date:%b %-d, %Y}")
+    if found.get("project_matches") is False:
+        problems.append("it's for the wrong project")
+    return problems
+
+
 def verify(w: Waiver, attachment: EmailAttachment, client=None) -> dict:
     settings = get_settings()
     base = {"checked_at": datetime.now(timezone.utc).isoformat(), "attachment_id": attachment.id,

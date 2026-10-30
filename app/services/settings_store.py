@@ -27,6 +27,8 @@ def defaults() -> dict:
         "email_templates": {},
         # Fill blank contact cells in All Subcontracts from confirmed contacts (never overwrites).
         "smartsheet_contact_fill": True,
+        # Subs with a revised contract at or over this (and not labor only) are asked for their supplier list.
+        "supplier_min": s.major_trade_threshold,
     }
 
 

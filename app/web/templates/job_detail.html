@@ -37,6 +37,7 @@
       {% else %}<span class="muted small">none signed yet</span>{% endif %}</td>
     <td>{% if w %}<a class="small" href="/waivers/{{ w.id }}">details</a>{% endif %}</td>
   </tr>
+  <tr class="sub-sups"><td colspan="4">{% with back='/jobs/' ~ p.number ~ '#waivers' %}{% include "partials/suppliers.html" %}{% endwith %}</td></tr>
   {% else %}
   <tr><td colspan="4" class="muted">No subcontracts on this job.</td></tr>
   {% endfor %}

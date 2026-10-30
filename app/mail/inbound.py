@@ -95,7 +95,7 @@ def vendor_for_address(db: Session, addr: str) -> Vendor | None:
 def open_waivers_for_vendor(db: Session, vendor_id: int) -> list[Waiver]:
     return list(db.scalars(
         select(Waiver).join(Subcontract).join(Project)
-        .where(Subcontract.vendor_id == vendor_id, Project.is_tracked.is_(True),
+        .where(Subcontract.vendor_id == vendor_id, Project.is_tracked.is_(True), Waiver.supplier_id.is_(None),
                Waiver.status.in_((WaiverStatus.SENT.value, WaiverStatus.REJECTED.value)))))
 
 
@@ -376,6 +376,18 @@ def process(db: Session, mb: Mailbox, msg: Incoming, provider=None) -> EmailMess
         _handle_bounce(db, mb, msg, e)
         return e
 
+    sc_list = _supplier_list_thread(db, known, token)
+    if sc_list is not None and not e.is_auto_reply:
+        # A reply to our supplier-list request: read the list into yes/no questions.
+        from app.suppliers import service as suppliers
+        e.kind, e.match_method = "supplier_list_reply", "thread" if known else "token"
+        e.project_number, e.vendor_id = sc_list.project.number, sc_list.vendor_id
+        if not readonly and provider is not None:
+            outbound._label(db, mb, provider, msg.thread_id)
+        suppliers.handle_list_reply(db, sc_list, e)
+        outbound.log_email(db, e, "system:mail", "received", matched_by=e.match_method, found_in=e.found_in)
+        return e
+
     w, method = _match(db, mb, msg, known, token, vendor)
     if w:
         e.waiver_id, e.match_method = w.id, method
@@ -391,6 +403,15 @@ def process(db: Session, mb: Mailbox, msg: Incoming, provider=None) -> EmailMess
         receive_waiver_copy(db, w, e, actor="system:mail")
     outbound.log_email(db, e, "system:mail", "received", matched_by=method, found_in=e.found_in)
     return e
+
+
+def _supplier_list_thread(db: Session, known: EmailMessage | None, token) -> Subcontract | None:
+    ref = None
+    if token and token.group(1).upper() == "SD":
+        ref = token.group(2)
+    elif known is not None and known.kind == "supplier_list" and (known.token or "").upper().startswith("SD-"):
+        ref = known.token.split("-", 1)[1]
+    return db.get(Subcontract, int(ref)) if ref and ref.isdigit() else None
 
 
 def _vendor_on_tracked_project(db: Session, vendor_id: int) -> bool:
@@ -450,18 +471,24 @@ def _store(db: Session, mb: Mailbox, msg: Incoming, direction: str, status: str)
 
 def receive_waiver_copy(db: Session, w: Waiver, e: EmailMessage, actor: str,
                         attachment: EmailAttachment | None = None) -> bool:
-    """File the returned copy against the waiver and run the advisory check."""
+    """File the returned copy against the waiver and run the advisory check. When the sub has
+    suppliers, each attachment is checked: supplier waivers are filed under that supplier."""
     from app.mail import verify
+    from app.suppliers import service as suppliers
     from app.waivers import service as waivers
 
+    if w.status in (WaiverStatus.ACCEPTED, WaiverStatus.VOID):
+        return False
+    if attachment is None and not w.supplier_id and suppliers.active(db, w.subcontract):
+        return _receive_with_suppliers(db, w, e, actor)
     att = attachment or next((a for a in e.attachments if a.is_pdf), None) or \
         next((a for a in e.attachments if a.is_image), None)
-    if att is None or w.status in (WaiverStatus.ACCEPTED, WaiverStatus.VOID):
+    if att is None:
+        return False
+    data = filestore.read(db, att.path)
+    if data is None:
         return False
     try:
-        data = filestore.read(db, att.path)
-        if data is None:
-            return False
         waivers.mark_received(db, w, actor, att.filename, data)
     except ValueError:
         return False
@@ -473,6 +500,48 @@ def receive_waiver_copy(db: Session, w: Waiver, e: EmailMessage, actor: str,
     w.verification = result | {"email_id": e.id}
     waivers.log_event(db, w, actor, "checked", note=result.get("status"))
     return True
+
+
+def _receive_with_suppliers(db: Session, w: Waiver, e: EmailMessage, actor: str) -> bool:
+    """The sub's email may carry its suppliers' waivers too. Check each attachment; file the sub's
+    own as its waiver and each supplier's under that supplier. Without the automatic check, the
+    first attachment is taken as the sub's (as before)."""
+    from app.mail import verify
+    from app.suppliers import service as suppliers
+    from app.waivers import service as waivers
+
+    files = [a for a in e.attachments if a.is_pdf] + [a for a in e.attachments if a.is_image]
+    own_filed = False
+    for att in files:
+        result = verify.verify(w, att)
+        found = result.get("found")
+        if found is None:  # not checked (no API key, or an error): old behaviour for the first file
+            if not own_filed:
+                own_filed = receive_waiver_copy(db, w, e, actor, attachment=att)
+            continue
+        if found.get("is_supplier_waiver"):
+            s = suppliers.match_supplier(db, w.subcontract, found.get("signer_company"))
+            if s is not None:
+                suppliers.file_supplier_waiver(db, w, s, att, result, actor)
+            else:
+                upsert_review(db, "supplier_waiver_unknown", "email", e.id, w.subcontract.project.number,
+                              f"A supplier waiver from {found.get('signer_company') or 'an unknown company'} came in with "
+                              f"{w.subcontract.vendor.name}'s email, but they aren't on {w.subcontract.vendor.name}'s "
+                              "supplier list. Add them, then file it from the email.", True)
+            continue
+        if own_filed:
+            continue
+        data = filestore.read(db, att.path)
+        if data is None:
+            continue
+        try:
+            waivers.mark_received(db, w, actor, att.filename, data)
+        except ValueError:
+            continue
+        w.verification = result | {"email_id": e.id}
+        waivers.log_event(db, w, actor, "checked", note=result.get("status"))
+        own_filed = True
+    return own_filed
 
 
 def _bounce_original(db: Session, mb: Mailbox, msg: Incoming) -> EmailMessage | None:

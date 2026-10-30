@@ -157,7 +157,7 @@ def refresh_partial_amounts(db: Session, actor: str = SYSTEM) -> int:
     from app.mail import outbound
 
     n = 0
-    for w in db.scalars(select(Waiver).where(Waiver.type.in_([t.value for t in PARTIALS]),
+    for w in db.scalars(select(Waiver).where(Waiver.type.in_([t.value for t in PARTIALS]), Waiver.supplier_id.is_(None),
                                              Waiver.status.in_([s.value for s in EDITABLE]))).all():
         new = paid_through(w.subcontract, w.payable)
         if w.amount == new:
@@ -173,7 +173,8 @@ def refresh_partial_amounts(db: Session, actor: str = SYSTEM) -> int:
 
 def create_waiver(db: Session, p: Payable, sc: Subcontract, wtype: WaiverType, ev: PayableEvent | None,
                   actor: str = SYSTEM) -> Waiver:
-    existing = db.scalar(select(Waiver).where(Waiver.payable_id == p.id, Waiver.type == wtype.value))
+    existing = db.scalar(select(Waiver).where(Waiver.payable_id == p.id, Waiver.type == wtype.value,
+                                              Waiver.supplier_id.is_(None)))
     if existing:
         return existing
     state = project_state(sc.project)
@@ -191,6 +192,12 @@ def create_waiver(db: Session, p: Payable, sc: Subcontract, wtype: WaiverType, e
                       f"Conditional final for {sc.vendor.name} lists exceptions: {w.exceptions_text}. "
                       "PM should confirm before it goes out.", True)
     attach_template_and_render(db, w, actor)
+    if wtype in (WaiverType.CONDITIONAL_FINAL, WaiverType.UNCONDITIONAL_FINAL):
+        from app.suppliers import service as suppliers
+        gone = suppliers.missing(db, sc)
+        if gone:
+            log_event(db, w, actor, "note", note="Supplier waivers still missing: " + ", ".join(s.name for s in gone))
+        suppliers.recheck_finals(db, sc)
     return w
 
 
@@ -417,8 +424,12 @@ def reject_and_reply(db: Session, w: Waiver, actor: str, reason: str):
     original = db.scalar(select(EmailMessage).where(EmailMessage.waiver_id == w.id, EmailMessage.direction == "in",
                                                     EmailMessage.found_in.is_(None))
                          .order_by(EmailMessage.id.desc())) or outbound.thread_root(db, w)
+    if original is None and w.supplier_id and (w.verification or {}).get("email_id"):
+        original = db.get(EmailMessage, w.verification["email_id"])  # the sub's email it came in on
     if original is None:
         return None
+    if w.supplier_id:
+        reason = f"{reason} (the waiver from {w.supplier.name})"
     e = outbound.draft_reply(db, original, "correction", values={"reason": reason}, actor=actor)
     outbound.maybe_auto_send(db, e)
     return e
@@ -486,7 +497,8 @@ def past_paid_invoices(db: Session, project: str = "", vendor_id: int | None = N
                    SubFacts(has_retention=sc.has_retention), flags(db))
         existing = None
         if d.waiver:
-            existing = db.scalar(select(Waiver).where(Waiver.payable_id == p.id, Waiver.type == d.waiver.value))
+            existing = db.scalar(select(Waiver).where(Waiver.payable_id == p.id, Waiver.type == d.waiver.value,
+                                                      Waiver.supplier_id.is_(None)))
         reason = "" if d.waiver else (d.reviews[0].message if d.reviews else d.note or "no waiver for this one")
         out.append(PastInvoice(p, sc, d.waiver, existing, reason))
     if only_missing:
@@ -522,7 +534,8 @@ SIGNED_STATUSES = (WaiverStatus.RECEIVED.value, WaiverStatus.ACCEPTED.value)
 def best_signed_waiver(db: Session, sc: Subcontract) -> Waiver | None:
     """The waiver that counts for a sub on a job: a signed unconditional final, else a signed
     conditional final, else the most recent signed partial (latest through date)."""
-    signed = db.scalars(select(Waiver).where(Waiver.subcontract_id == sc.id, Waiver.status.in_(SIGNED_STATUSES),
+    signed = db.scalars(select(Waiver).where(Waiver.subcontract_id == sc.id, Waiver.supplier_id.is_(None),
+                                             Waiver.status.in_(SIGNED_STATUSES),
                                              Waiver.signed_pdf_path.is_not(None))).all()
 
     def recent(w: Waiver):
@@ -544,7 +557,11 @@ def job_waiver_rows(db: Session, project: Project) -> list[dict]:
         pays = [p for p in sc.payables if not p.deleted_in_source
                 and (p.approval_status or "").strip().lower() != "rejected"]
         latest = max(pays, key=order_key) if pays else None
-        rows.append({"sc": sc, "invoice": latest, "waiver": best_signed_waiver(db, sc)})
+        from app.suppliers import service as suppliers
+        sups = [{"supplier": s, "waiver": suppliers.best_waiver(db, s), "words": suppliers.status_words(db, s)}
+                for s in suppliers.active(db, sc)]
+        rows.append({"sc": sc, "invoice": latest, "waiver": best_signed_waiver(db, sc), "suppliers": sups,
+                     "major": suppliers.is_major_trade(db, sc)})
     return rows
 
 
@@ -569,7 +586,8 @@ def combined_signed_pdf(db: Session, waivers: list[Waiver]) -> bytes:
     out = PdfWriter()
     for w in waivers:
         data = filestore.read(db, w.signed_pdf_path)
-        label = f"{w.subcontract.vendor.name}: {WaiverType(w.type).label} waiver #{w.id}"
+        who = f"{w.supplier.name} (supplier to {w.subcontract.vendor.name})" if w.supplier_id else w.subcontract.vendor.name
+        label = f"{who}: {WaiverType(w.type).label} waiver #{w.id}"
         reader = None
         if data and data[:5] == b"%PDF-":
             try:
@@ -654,6 +672,10 @@ def job_packet_entries(db: Session, project: Project, include_suppliers: bool = 
     entries = []
     for r in job_waiver_rows(db, project):
         entries.append({"name": r["sc"].vendor.name, "waiver": r["waiver"], "supplier": False})
+        if include_suppliers:
+            for s in r["suppliers"]:
+                entries.append({"name": s["supplier"].name, "waiver": s["waiver"], "supplier": True,
+                                "parent": r["sc"].vendor.name})
     return entries
 
 

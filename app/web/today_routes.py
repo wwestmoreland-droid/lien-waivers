@@ -36,6 +36,7 @@ def today(request: Request, msg: str = "", db: Session = Depends(get_db), user: 
     signed = svc.signed_back(db)
     questions = svc.quick_questions(db, user)
     waiting = svc.waiting_on_subs(db)
+    lists = svc.waiting_lists(db)
     notary = {}
     for w in signed:
         t = waivers.registry().templates.get(w.template_key or "")
@@ -44,7 +45,8 @@ def today(request: Request, msg: str = "", db: Session = Depends(get_db), user: 
     first = (user.name or user.email).split()[0].split("@")[0].split(".")[0].capitalize()
     return templates.TemplateResponse(request, "today.html", {
         "user": user, "msg": msg, "first": first, "need": need, "editor": editor,
-        "to_send": to_send, "signed": signed, "questions": questions, "waiting": waiting,
+        "to_send": to_send, "signed": signed, "questions": questions, "waiting": waiting, "lists": lists,
+        "list_next": lambda sc: svc.list_next_step(db, sc),
         "can_review": lambda w: svc.can_review(user, w), "check": lambda w: svc.check_words(w, notary[w.id]),
         "reasons": _reasons, "next_step": lambda w: svc.next_step(db, w), "today": svc.local_today(),
         "accepted_week": svc.accepted_this_week(db),
