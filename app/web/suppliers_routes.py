@@ -90,21 +90,16 @@ def answer_candidate(cid: int, answer: str, back: str = Form(""), db: Session = 
     return _go(back, c.subcontract, msg)
 
 
-@router.post("/jobs/{number}/suppliers")
-def job_supplier_tracking(number: str, on: str = Form(""), back: str = Form(""), db: Session = Depends(get_db),
+@router.post("/subs/{sc_id}/track-suppliers")
+def sub_supplier_tracking(sc_id: int, on: str = Form(""), back: str = Form(""), db: Session = Depends(get_db),
                           user: User = Depends(editor)):
-    """The 'Track suppliers on this job' checkbox."""
-    from sqlalchemy import select
-
-    from app.db.models import Project
-
-    p = db.scalar(select(Project).where(Project.number == number))
-    if not p:
-        raise HTTPException(404)
-    dropped = service.set_tracking(db, p, on == "1", user.email)
+    """The 'Track suppliers' checkbox under each sub."""
+    sc = _sub(db, sc_id)
+    dropped = service.set_tracking(db, sc, on == "1", user.email)
     db.commit()
     if on == "1":
-        msg = f"Tracking suppliers on {p.number} again."
+        msg = f"Tracking suppliers for {sc.vendor.name} again."
     else:
-        msg = f"Suppliers are off for {p.number}." + (f" {dropped} unsent supplier-list email{'s' if dropped != 1 else ''} thrown away." if dropped else "")
-    return RedirectResponse(with_msg(safe_back(back, f"/jobs/{p.number}"), msg), status_code=303)
+        msg = f"Suppliers are off for {sc.vendor.name} on {sc.project.number}." + (
+            f" {dropped} unsent supplier-list email{'s' if dropped != 1 else ''} thrown away." if dropped else "")
+    return _go(back, sc, msg)

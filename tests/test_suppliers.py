@@ -209,34 +209,36 @@ def test_final_lists_missing_supplier_waivers(mail):
     assert db.get(ReviewItem, item.id).status == "resolved"
 
 
-def test_job_checkbox_turns_suppliers_off_and_back_on(mail):
-    from app.db.models import Project
+def test_sub_checkbox_turns_suppliers_off_and_back_on(mail):
     db = mail.db
-    delta = sub(db, 101)
+    delta, ridge = sub(db, 101), sub(db, 102)
     abc = suppliers.add(db, delta, "ap", "ABC Supply")
-    db.add(SupplierCandidate(subcontract_id=sub(db, 102).id, name="Ferguson"))
+    db.add(SupplierCandidate(subcontract_id=delta.id, name="Pipe Co"))
     db.commit()
-    unsent = db.scalars(select(EmailMessage).where(EmailMessage.kind == "supplier_list",
-                                                   EmailMessage.status == "draft")).all()
-    assert unsent
+    delta_list = db.scalar(select(EmailMessage).where(EmailMessage.token == f"SD-{delta.id}"))
+    ridge_list = db.scalar(select(EmailMessage).where(EmailMessage.token == f"SD-{ridge.id}"))
+    assert delta_list.status == ridge_list.status == "draft"
     with TestClient(create_app()) as c:
-        assert "Track suppliers on this job" in c.get("/jobs").text
-        r = c.post(f"/jobs/{PROJECT}/suppliers", data={"back": "/jobs"})  # unticked
-        assert "Suppliers are off" in r.text and "Suppliers (" not in r.text
-        assert "Ferguson" not in c.get("/").text
+        assert c.get("/jobs").text.count("Track suppliers") >= 2  # one per sub
+        r = c.post(f"/subs/{delta.id}/track-suppliers", data={"back": "/jobs"})  # unticked for Delta only
+        assert "Suppliers are off for Delta Fire Systems, Inc" in r.text
+        assert "Pipe Co" not in c.get("/").text
     db.expire_all()
-    assert not db.scalar(select(Project).where(Project.number == PROJECT)).track_suppliers
-    assert all(e.status == "discarded" for e in unsent)
+    delta, ridge = db.get(Subcontract, delta.id), db.get(Subcontract, ridge.id)
+    assert not delta.track_suppliers and ridge.track_suppliers
+    assert db.get(EmailMessage, delta_list.id).status == "discarded"
+    assert db.get(EmailMessage, ridge_list.id).status == "draft"  # other subs untouched
     assert suppliers.active(db, delta) == [] and not suppliers.is_major_trade(db, delta)
-    # Waiver emails stop asking for supplier waivers, and no new list requests go out.
+    assert suppliers.is_major_trade(db, ridge)
+    # Delta's waiver email stops asking for supplier waivers, and no new list request goes out.
     w, e = send_request(mail)
     assert "suppliers" not in e.body_text
     run_sync(db, mail.source, trigger="test")
-    assert not db.scalar(select(EmailMessage).where(EmailMessage.kind == "supplier_list",
+    assert not db.scalar(select(EmailMessage).where(EmailMessage.token == f"SD-{delta.id}",
                                                     EmailMessage.status == "draft"))
     # Nothing was deleted: ticking it again brings ABC Supply back.
     with TestClient(create_app()) as c:
-        c.post(f"/jobs/{PROJECT}/suppliers", data={"on": "1", "back": "/jobs"})
+        c.post(f"/subs/{delta.id}/track-suppliers", data={"on": "1", "back": "/jobs"})
         assert "ABC Supply" in c.get("/jobs").text
     db.expire_all()
     assert [s.id for s in suppliers.active(db, db.get(Subcontract, delta.id))] == [abc.id]

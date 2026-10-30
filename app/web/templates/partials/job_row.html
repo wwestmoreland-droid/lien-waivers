@@ -15,7 +15,6 @@
         {% if g and g.over_billed %}<span class="badge bad">{{ g.over_billed }} over-billed</span>{% endif %}</span>
     </summary>
     <div class="job-subs">
-      {% with back='/jobs' %}{% include "partials/supplier_switch.html" %}{% endwith %}
       {% for r in subs or [] %}{% set w = r.waiver %}
       <div class="job-sub">
         <div class="job-sub-line"><a href="/subs/{{ r.sc.id }}">{{ r.sc.vendor.name }}</a>
@@ -29,7 +28,7 @@
     <details class="dl">
       <summary class="btn">Download waivers</summary>
       <form class="dl-form" method="get" action="/jobs/{{ p.number }}/signed-waivers.pdf">
-        {% if p.track_suppliers %}<label><input type="checkbox" name="suppliers" value="1"> Include suppliers' waivers</label>{% endif %}
+        <label><input type="checkbox" name="suppliers" value="1"> Include suppliers' waivers</label>
         <button class="btn primary">Download PDF</button>
       </form>
     </details>

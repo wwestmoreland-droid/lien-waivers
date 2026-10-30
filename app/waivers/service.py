@@ -672,7 +672,7 @@ def job_packet_entries(db: Session, project: Project, include_suppliers: bool = 
     entries = []
     for r in job_waiver_rows(db, project):
         entries.append({"name": r["sc"].vendor.name, "waiver": r["waiver"], "supplier": False})
-        if include_suppliers and project.track_suppliers:
+        if include_suppliers and r["sc"].track_suppliers:
             for s in r["suppliers"]:
                 entries.append({"name": s["supplier"].name, "waiver": s["waiver"], "supplier": True,
                                 "parent": r["sc"].vendor.name})

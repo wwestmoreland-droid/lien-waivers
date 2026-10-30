@@ -52,8 +52,8 @@ def to_amount(v) -> Decimal | None:
 # ---------------------------------------------------------------- the list
 
 def tracked(sc: Subcontract) -> bool:
-    """Suppliers can be switched off per job (Jobs page checkbox)."""
-    return bool(sc.project.track_suppliers)
+    """Suppliers can be switched off for a sub (the checkbox under each sub)."""
+    return bool(sc.track_suppliers)
 
 
 def active(db: Session, sc: Subcontract) -> list[Supplier]:
@@ -160,7 +160,7 @@ def ensure_list_requests(db: Session) -> int:
     """Once per major-trade sub: when the job is first tracked or the sub first crosses the minimum."""
     n = 0
     for sc in db.scalars(select(Subcontract).join(Project).where(
-            Project.is_tracked.is_(True), Project.track_suppliers.is_(True), Subcontract.deleted_in_source.is_(False),
+            Project.is_tracked.is_(True), Subcontract.track_suppliers.is_(True), Subcontract.deleted_in_source.is_(False),
             Subcontract.supplier_list_status.is_(None))).all():
         if is_major_trade(db, sc) and not active(db, sc):
             request_list(db, sc)
@@ -391,30 +391,33 @@ def recheck_finals(db: Session, sc: Subcontract) -> None:
             upsert_review(db, "missing_supplier_waivers", "waiver", w.id, sc.project.number, "", False)
 
 
-def set_tracking(db: Session, project: Project, on: bool, actor: str) -> int:
-    """Turn suppliers on or off for a job. Turning off throws away unsent supplier-list emails
-    and closes supplier questions; nothing already entered is deleted."""
-    project.track_suppliers = on
-    audit(db, actor, "project.suppliers_on" if on else "project.suppliers_off", "project", project.number)
+def set_tracking(db: Session, sc: Subcontract, on: bool, actor: str) -> int:
+    """Turn suppliers on or off for one sub on one job. Turning off throws away its unsent
+    supplier-list emails and closes its supplier questions; nothing already entered is deleted."""
+    from app.db.models import ReviewItem
+
+    sc.track_suppliers = on
+    audit(db, actor, "subcontract.suppliers_on" if on else "subcontract.suppliers_off", "subcontract", sc.id,
+          vendor=sc.vendor.name, project=sc.project.number)
     if on:
-        for sc in project.subcontracts:
-            recheck_finals(db, sc)
+        recheck_finals(db, sc)
         return 0
     n = 0
-    sc_ids = [sc.id for sc in project.subcontracts]
     for e in db.scalars(select(EmailMessage).where(
-            EmailMessage.kind.in_(("supplier_list", "supplier_list_reminder")),
-            EmailMessage.token.in_([f"SD-{i}" for i in sc_ids] or ["-"]),
+            EmailMessage.kind.in_(("supplier_list", "supplier_list_reminder")), EmailMessage.token == f"SD-{sc.id}",
             EmailMessage.status.in_(("draft", "queued", "failed")))):
         e.status = "discarded"
         n += 1
-    for c in db.scalars(select(SupplierCandidate).where(SupplierCandidate.subcontract_id.in_(sc_ids or [-1]),
+    for c in db.scalars(select(SupplierCandidate).where(SupplierCandidate.subcontract_id == sc.id,
                                                         SupplierCandidate.status == "pending")):
-        c.status, c.decided_by, c.decided_at = "rejected", f"{actor} (suppliers off for the job)", now()
-    from app.db.models import ReviewItem
-    for r in db.scalars(select(ReviewItem).where(ReviewItem.project_number == project.number, ReviewItem.status == "open",
-                                                 ReviewItem.kind.in_(("missing_supplier_waivers", "supplier_list_unread",
-                                                                      "supplier_waiver_unknown")))):
-        r.status, r.resolved_by, r.resolved_at = "dismissed", actor, now()
-        r.note = "Suppliers turned off for this job"
+        c.status, c.decided_by, c.decided_at = "rejected", f"{actor} (suppliers off for this sub)", now()
+    waiver_ids = [w.id for w in db.scalars(select(Waiver).where(Waiver.subcontract_id == sc.id))]
+    for r in db.scalars(select(ReviewItem).where(ReviewItem.status == "open", ReviewItem.kind.in_(
+            ("missing_supplier_waivers", "supplier_list_unread", "supplier_waiver_unknown")))):
+        mine = (r.ref_type == "waiver" and r.ref_id in waiver_ids) or (
+            r.ref_type == "email" and (db.get(EmailMessage, r.ref_id) or EmailMessage()).vendor_id == sc.vendor_id
+            and r.project_number == sc.project.number)
+        if mine:
+            r.status, r.resolved_by, r.resolved_at = "dismissed", actor, now()
+            r.note = "Suppliers turned off for this sub"
     return n

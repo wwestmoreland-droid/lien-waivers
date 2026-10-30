@@ -1,7 +1,15 @@
-{# Suppliers (n) dropdown under one sub. Expects r (a job_waiver_rows row) and back.
-   Shows nothing when suppliers are switched off for the job. #}
-{% if r.sc.project.track_suppliers %}
-{% set sc = r.sc %}{% set sups = r.suppliers %}{% set ed = user.role in ('Admin', 'AP') %}
+{# Suppliers (n) dropdown under one sub, with its "Track suppliers" checkbox. Expects r (a
+   job_waiver_rows row) and back. With the box unticked only the checkbox shows. #}
+{% set sc = r.sc %}
+<div class="sup-line">
+{% if user.role in ('Admin', 'AP') %}
+<form method="post" action="/subs/{{ sc.id }}/track-suppliers" class="sup-switch">
+  <input type="hidden" name="back" value="{{ back }}">
+  <label class="small"><input type="checkbox" name="on" value="1" {{ 'checked' if sc.track_suppliers }} onchange="this.form.submit()"> Track suppliers</label>
+  <noscript><button class="btn sm">Save</button></noscript>
+</form>
+{% elif not sc.track_suppliers %}<span class="small muted">Suppliers not tracked</span>{% endif %}
+{% if sc.track_suppliers %}{% set sups = r.suppliers %}{% set ed = user.role in ('Admin', 'AP') %}
 <details class="sups">
   <summary class="small linkish">Suppliers ({{ sups|length }}){% if sc.supplier_list_status == 'none' %} · none over the minimum{% elif sc.supplier_list_status == 'requested' and not sups %} · list requested{% endif %}</summary>
   <div class="sups-body">
@@ -46,3 +54,4 @@
   </div>
 </details>
 {% endif %}
+</div>

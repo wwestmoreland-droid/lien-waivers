@@ -377,7 +377,7 @@ def process(db: Session, mb: Mailbox, msg: Incoming, provider=None) -> EmailMess
         return e
 
     sc_list = _supplier_list_thread(db, known, token)
-    if sc_list is not None and not e.is_auto_reply and sc_list.project.track_suppliers:
+    if sc_list is not None and not e.is_auto_reply and sc_list.track_suppliers:
         # A reply to our supplier-list request: read the list into yes/no questions.
         from app.suppliers import service as suppliers
         e.kind, e.match_method = "supplier_list_reply", "thread" if known else "token"
