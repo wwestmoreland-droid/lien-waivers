@@ -41,26 +41,35 @@ def our_pdf_digests(db: Session, w: Waiver) -> set[str]:
     return out
 
 
-def reason_not_signed(db: Session, w: Waiver, e: EmailMessage) -> str | None:
-    """Why this reply shouldn't be filed as the signed copy, or None if it looks like one."""
-    files = [a for a in e.attachments if a.is_pdf or a.is_image]
-    if not files:
-        return None
-    ours = our_pdf_digests(db, w)
-    if ours and all(_digest(filestore.read(db, a.path) or b"") in ours for a in files):
-        return "They sent back our own unsigned copy."
-    words = own_words(e)
-    m = NOT_SIGNED.search(words)
+def reason_from_words(words: str) -> str | None:
+    m = NOT_SIGNED.search(words or "")
     if not m:
         return None
-    # They say it isn't signed yet. If the automatic check can read the file, trust a signature it finds.
-    from app.mail import verify
-    result = verify.verify(w, next((a for a in files if a.is_pdf), files[0]))
-    found = result.get("found") or {}
-    if found and found.get("appears_signed") and found.get("is_lien_waiver"):
+    return f'They wrote: "{words[max(0, m.start() - 60): m.end() + 80].strip()}"'
+
+
+def hold_reason(db: Session, w: Waiver, e: EmailMessage, files: list, words: str) -> str | None:
+    """Hold a real file back only when they say it isn't signed AND the automatic check agrees.
+    Without the check (no API key), it's filed with their words shown next to it: hiding a real
+    signed copy is worse than showing an unsigned one."""
+    if not NOT_SIGNED.search(words or "") or not files:
         return None
-    snippet = words[max(0, m.start() - 60): m.end() + 80].strip()
-    return f'They wrote: "{snippet}"'
+    from app.mail import verify
+    found = verify.verify(w, files[0]).get("found") or {}
+    if found and not found.get("appears_signed"):
+        return reason_from_words(words)
+    return None
+
+
+def reason_not_signed(db: Session, w: Waiver, e: EmailMessage) -> str | None:
+    """Why this reply shouldn't be filed as the signed copy, or None if it looks like one."""
+    from app.mail.replies import candidates
+    if not [a for a in e.attachments if a.is_pdf or a.is_image]:
+        return None
+    files, _, came_back = candidates(db, w, e)
+    if not files:
+        return "They sent back our own unsigned copy." if came_back else None
+    return hold_reason(db, w, e, files, own_words(e))
 
 
 def forwarded_addresses(db: Session, w: Waiver, e: EmailMessage) -> list[str]:

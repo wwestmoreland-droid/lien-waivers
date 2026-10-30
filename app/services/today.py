@@ -224,8 +224,7 @@ def quick_questions(db: Session, user) -> list[Question]:
         if r.ref_type == "payable":
             p = db.get(Payable, r.ref_id)
             url = f"/subs/{p.subcontract_id}" if p and p.subcontract_id else "/queues#review"
-        qs.append(Question("review", _review_sentence(r), r.kind in ("hold", "final_exceptions", "email_bounced",
-                                                                     "missing_supplier_waivers"),
+        qs.append(Question("review", _review_sentence(r), r.kind in BLOCKING_REVIEWS,
                            url, r))
 
     # Suppliers read from a sub's emailed list.
@@ -259,6 +258,12 @@ def quick_questions(db: Session, user) -> list[Question]:
 
     qs.sort(key=lambda q: (not q.blocks, q.kind != "contact"))
     return qs
+
+
+# Review items that hold up a waiver (shown first). Most are replies the app couldn't settle.
+BLOCKING_REVIEWS = ("hold", "final_exceptions", "email_bounced", "missing_supplier_waivers", "copy_for_cancelled",
+                    "copy_after_accepted", "other_company", "found_in_ap", "signed_by_link", "unreadable_file",
+                    "nothing_attached", "sub_replied", "extra_files", "unmatched_copy")
 
 
 def _review_sentence(r: ReviewItem) -> str:

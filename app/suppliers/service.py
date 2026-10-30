@@ -118,6 +118,8 @@ def add(db: Session, sc: Subcontract, actor: str, name: str, supplies: str | Non
     if not name:
         raise ValueError("Give the supplier's company name.")
     vendor = resolver.get_or_create_vendor(db, name)
+    if vendor.id == sc.vendor_id:
+        raise ValueError(f"{name} is the sub itself, not one of its suppliers.")
     if vendor.type == "sub" and not db.scalar(select(Subcontract.id).where(Subcontract.vendor_id == vendor.id).limit(1)):
         vendor.type = "supplier"
     existing = db.scalar(select(Supplier).where(Supplier.subcontract_id == sc.id, Supplier.vendor_id == vendor.id))
@@ -362,6 +364,16 @@ def status_words(db: Session, s: Supplier) -> str:
     if w.through_date and not WaiverType(w.type).is_final:
         words += f" through {w.through_date.month}/{w.through_date.day}"
     return words + (", signed" if w.status == WaiverStatus.ACCEPTED else ", signed (not reviewed yet)")
+
+
+def supplier_named_in(db: Session, sc: Subcontract, filename: str | None) -> Supplier | None:
+    """A file named after one of the sub's suppliers ("ABC Supply lien waiver.pdf")."""
+    text = normalize_vendor((filename or "").rsplit(".", 1)[0].replace("_", " ").replace("-", " "))
+    for s in active(db, sc):
+        n = normalize_vendor(s.name)
+        if n and len(n) >= 4 and n in text:
+            return s
+    return None
 
 
 def match_supplier(db: Session, sc: Subcontract, company: str | None) -> Supplier | None:

@@ -19,6 +19,7 @@ from app.db.models import (
     EmailMessage,
     Mailbox,
     Project,
+    ReviewItem,
     Subcontract,
     Vendor,
     Waiver,
@@ -28,7 +29,7 @@ from app.mail.provider import CursorExpired, Incoming, MessageGone, TokenError
 from app.services import filestore
 from app.services.reviews import upsert_review
 from app.smartsheet.sync import PUBLIC_MAIL_DOMAINS
-from app.waivers.types import WaiverStatus
+from app.waivers.types import WaiverStatus, WaiverType
 
 log = structlog.get_logger()
 
@@ -80,9 +81,14 @@ def vendor_for_address(db: Session, addr: str) -> Vendor | None:
         Subcontract.estimator_email == addr, Subcontract.foreman_email == addr)))
     if sc:
         return sc.vendor
-    v = db.scalar(select(Vendor).where(Vendor.billing_email == addr))
+    v = db.scalar(select(Vendor).where(or_(Vendor.billing_email == addr, Vendor.waiver_email == addr)))
     if v:
         return v
+    from app.db.models import Contact
+    c = db.scalar(select(Contact).where(Contact.email == addr, Contact.status == "confirmed",
+                                        Contact.vendor_id.is_not(None)))
+    if c is not None:
+        return c.vendor  # e.g. a bookkeeper on Gmail you confirmed for the sub
     dom = _domain(addr)
     if not dom or dom in PUBLIC_MAIL_DOMAINS or dom == INTERNAL_DOMAIN:
         return None
@@ -222,6 +228,8 @@ def file_waiting_replies(db: Session, days: int = 45) -> int:
         from app.mail import unsigned
         if unsigned.was_held(db, e):
             continue  # the sub said it isn't signed yet (or sent our own copy back)
+        if db.scalar(select(ReviewItem.id).where(ReviewItem.ref_type == "email", ReviewItem.ref_id == e.id).limit(1)):
+            continue  # the app already asked a person about this email
         reason = unsigned.reason_not_signed(db, w, e)
         if reason:
             unsigned.note_reply(db, w, e, reason)
@@ -249,7 +257,7 @@ def _refetch_attachments(db: Session, e: EmailMessage) -> None:
     if not msg.attachments:
         return
     folder = get_settings().data_dir / "emails" / str(e.id)
-    for i, a in enumerate(msg.attachments):
+    for i, a in enumerate(_iphone_photos_as_jpeg(x) for x in msg.attachments):
         safe = "".join(ch for ch in Path(a.filename).name if ch.isalnum() or ch in "._- ")[-150:] or "attachment"
         path = folder / f"{i}-{safe}"
         filestore.write(db, path, a.data)
@@ -350,17 +358,22 @@ def worth_reading(db: Session, mb: Mailbox, meta: Incoming) -> bool:
         return False
     if TOKEN_RE.search(meta.subject or ""):
         return True
-    if not readonly and _known_thread(db, mb, meta.thread_id) is not None:
+    if not readonly and (_known_thread(db, mb, meta.thread_id) is not None or _known_by_headers(db, mb, meta)):
         return True
     if "SENT" in meta.label_ids or meta.from_addr == mb.email:
         return False
     if not readonly and is_bounce(meta):
         return True
-    vendor = vendor_for_address(db, meta.from_addr)
+    subject_waiverish = bool(WAIVER_WORDS.search(meta.subject or ""))
+    if _domain(meta.from_addr) == INTERNAL_DOMAIN:
+        return subject_waiverish  # a coworker forwarding a waiver; the body says from whom
+    vendor = vendor_for_address(db, meta.from_addr) or _vendor_behind(db, meta)
     if vendor is None or not _vendor_on_tracked_project(db, vendor.id):
         return False
+    if _list_reply_without_tag(db, vendor, meta) is not None:
+        return True
     # Attachment names aren't in the headers, so a sub that owes us a waiver is read in full.
-    return bool(WAIVER_WORDS.search(meta.subject or "")) or bool(open_waivers_for_vendor(db, vendor.id))
+    return subject_waiverish or bool(open_waivers_for_vendor(db, vendor.id))
 
 
 def _known_thread(db: Session, mb: Mailbox, thread_id: str) -> EmailMessage | None:
@@ -375,7 +388,7 @@ def process(db: Session, mb: Mailbox, msg: Incoming, provider=None) -> EmailMess
     if readonly and mb.only_to and mb.only_to.lower() not in msg.recipients_all:
         return None  # e.g. personal mail in a mailbox that receives ap@ forwards
 
-    known = None if readonly else _known_thread(db, mb, msg.thread_id)
+    known = None if readonly else (_known_thread(db, mb, msg.thread_id) or _known_by_headers(db, mb, msg))
     token = TOKEN_RE.search(msg.subject or "")
 
     if "SENT" in msg.label_ids or msg.from_addr == mb.email:
@@ -387,19 +400,24 @@ def process(db: Session, mb: Mailbox, msg: Incoming, provider=None) -> EmailMess
         e.waiver_id, e.project_number, e.vendor_id = known.waiver_id, known.project_number, known.vendor_id
         return e
 
-    vendor = vendor_for_address(db, msg.from_addr)
+    sender_vendor = vendor_for_address(db, msg.from_addr)
+    vendor = sender_vendor or _vendor_behind(db, msg)  # Reply-To, or who a coworker forwarded it from
     bounce = is_bounce(msg)
     has_files = any(looks_like_waiver_file(a.filename) for a in msg.attachments)
     waiverish = bool(WAIVER_WORDS.search((msg.subject or "") + " " + " ".join(a.filename for a in msg.attachments)))
     tracked_vendor = vendor is not None and _vendor_on_tracked_project(db, vendor.id)
 
+    owes = tracked_vendor and bool(open_waivers_for_vendor(db, vendor.id))
     if readonly:
-        keep = bool(token) or (tracked_vendor and has_files and waiverish)
+        keep = bool(token) or (tracked_vendor and has_files and (waiverish or owes))
     else:
         # A sub's everyday mail (RFIs, drawings, invoices) stays in Gmail. Kept: waiver threads, [LW-]
-        # tags, bounces, mail that talks about a waiver, and files from a sub that owes us one.
+        # tags, bounces, mail that talks about a waiver, files from a sub that owes us one, a
+        # coworker forwarding waiver files, and a supplier list we asked for.
+        internal_fwd = _domain(msg.from_addr) == INTERNAL_DOMAIN and has_files and waiverish
         keep = known is not None or bool(token) or bounce and _bounce_original(db, mb, msg) is not None \
-            or (tracked_vendor and (waiverish or (has_files and bool(open_waivers_for_vendor(db, vendor.id)))))
+            or (tracked_vendor and (waiverish or (has_files and owes))) or internal_fwd \
+            or _list_reply_without_tag(db, vendor, msg) is not None
     if not keep:
         return None
 
@@ -413,7 +431,7 @@ def process(db: Session, mb: Mailbox, msg: Incoming, provider=None) -> EmailMess
         _handle_bounce(db, mb, msg, e)
         return e
 
-    sc_list = _supplier_list_thread(db, known, token)
+    sc_list = _supplier_list_thread(db, known, token) or (None if known else _list_reply_without_tag(db, vendor, msg))
     if sc_list is not None and not e.is_auto_reply and sc_list.track_suppliers:
         # A reply to our supplier-list request: read the list into yes/no questions.
         from app.suppliers import service as suppliers
@@ -422,6 +440,17 @@ def process(db: Session, mb: Mailbox, msg: Incoming, provider=None) -> EmailMess
         if not readonly and provider is not None:
             outbound._label(db, mb, provider, msg.thread_id)
         suppliers.handle_list_reply(db, sc_list, e)
+        # A signed waiver sent along on the list thread still gets filed.
+        from app.mail import replies
+        if replies.candidates(db, None, e)[0] and WAIVER_WORDS.search(replies.own_words(e) + " " +
+                                                                        " ".join(a.filename for a in e.attachments)):
+            ws = open_waivers_for_vendor(db, sc_list.vendor_id)
+            if len(ws) == 1:
+                e.waiver_id = ws[0].id
+                replies.handle(db, ws[0], e, sender_vendor.id if sender_vendor else None, readonly)
+            elif ws:
+                replies.ask(db, "unmatched_copy", e, None, f"{sc_list.vendor.name} sent a signed waiver with their "
+                                                           "supplier list. Open it and link it to the right waiver.")
         outbound.log_email(db, e, "system:mail", "received", matched_by=e.match_method, found_in=e.found_in)
         return e
 
@@ -436,15 +465,9 @@ def process(db: Session, mb: Mailbox, msg: Incoming, provider=None) -> EmailMess
     if not readonly and (w or known) and provider is not None:
         outbound._label(db, mb, provider, msg.thread_id)
 
-    if w and not readonly and not e.is_auto_reply:
-        from app.mail import unsigned
-        reason = unsigned.reason_not_signed(db, w, e)
-        if reason is None and not e.attachments and unsigned.NOT_SIGNED.search(unsigned.own_words(e)):
-            reason = "They replied without a signed copy."
-        if reason:
-            unsigned.note_reply(db, w, e, reason)  # "forwarded to billing" etc.: keep waiting, don't review
-        elif e.attachments:
-            receive_waiver_copy(db, w, e, actor="system:mail")
+    if w and not e.is_auto_reply:
+        from app.mail import replies
+        replies.handle(db, w, e, sender_vendor.id if sender_vendor else None, readonly)
     outbound.log_email(db, e, "system:mail", "received", matched_by=method, found_in=e.found_in)
     return e
 
@@ -464,17 +487,91 @@ def _vendor_on_tracked_project(db: Session, vendor_id: int) -> bool:
 
 
 def _match(db: Session, mb: Mailbox, msg: Incoming, known: EmailMessage | None, token, vendor: Vendor | None):
+    """Thread, then [LW-] tag, then the sender's one open waiver. A thread or tag pointing at a
+    waiver that's already accepted or cancelled falls through to the sub's open waiver (subs
+    often reply on last month's email); when the sub says "final", its open final wins."""
+    has_files = any(looks_like_waiver_file(a.filename) or a.filename.lower().endswith(".pdf") for a in msg.attachments)
+    found, how = None, None
     if known is not None and known.waiver_id:
-        return db.get(Waiver, known.waiver_id), "thread"
-    if token and token.group(1).upper() == "LW":
-        w = db.get(Waiver, int(token.group(2)))
-        if w:
-            return w, "token"
-    if vendor is not None:
-        candidates = open_waivers_for_vendor(db, vendor.id)
-        if len(candidates) == 1:
-            return candidates[0], "sender"
+        found, how = db.get(Waiver, known.waiver_id), "thread"
+    elif token and token.group(1).upper() == "LW":
+        found, how = db.get(Waiver, int(token.group(2))), "token"
+    sub_vendor = found.subcontract.vendor_id if found is not None else (vendor.id if vendor is not None else None)
+    open_ws = open_waivers_for_vendor(db, sub_vendor) if sub_vendor else []
+    if found is not None and found.status in (WaiverStatus.ACCEPTED, WaiverStatus.VOID) and has_files:
+        others = [w for w in open_ws if w.id != found.id]
+        if len(others) == 1:
+            return others[0], f"{how}-moved"  # match_method holds 30 characters
+    if found is not None:
+        text = (msg.subject or "") + " " + (msg.body_text or "")[:2000] + " " + " ".join(a.filename for a in msg.attachments)
+        if re.search(r"\bfinal\b", text, re.I) and not WaiverType(found.type).is_final:
+            finals = [w for w in open_ws if WaiverType(w.type).is_final]
+            if len(finals) == 1:
+                return finals[0], f"{how}-final"
+        return found, how
+    if len(open_ws) == 1:
+        return open_ws[0], "sender"
     return None, None
+
+
+def _known_by_headers(db: Session, mb: Mailbox, msg: Incoming) -> EmailMessage | None:
+    """Their mail system broke the thread, but In-Reply-To/References still name our email."""
+    for rfc in re.findall(r"<[^>]+>", " ".join(x for x in (msg.in_reply_to, msg.references) if x)):
+        e = db.scalar(select(EmailMessage).where(EmailMessage.rfc_message_id == rfc, EmailMessage.mailbox_id == mb.id,
+                                                 EmailMessage.direction == "out"))
+        if e is not None:
+            return e
+    return None
+
+
+FORWARDED_FROM = re.compile(r"^\s*from:\s*.*?<?([\w.+-]+@[\w-]+(?:\.[\w-]+)+)>?", re.I | re.M)
+
+
+def _vendor_behind(db: Session, msg: Incoming) -> Vendor | None:
+    """The sub behind a no-reply service (its Reply-To) or a coworker's forward ("From:" line)."""
+    reply_to = msg.headers.get("reply-to")
+    if reply_to:
+        import email.utils
+        for _, addr in email.utils.getaddresses([reply_to]):
+            v = vendor_for_address(db, addr) if addr else None
+            if v:
+                return v
+    if _domain(msg.from_addr) == INTERNAL_DOMAIN:
+        for addr in FORWARDED_FROM.findall(msg.body_text or ""):
+            v = vendor_for_address(db, addr)
+            if v:
+                return v
+    return None
+
+
+def _list_reply_without_tag(db: Session, vendor: Vendor | None, msg: Incoming) -> Subcontract | None:
+    """A new email (no tag) from a sub we asked for a supplier list, about its suppliers."""
+    if vendor is None or not re.search(r"supplier|sub-?tier|vendor list", (msg.subject or "") + " " +
+                                       (msg.body_text or "")[:3000], re.I):
+        return None
+    scs = db.scalars(select(Subcontract).where(Subcontract.vendor_id == vendor.id,
+                                               Subcontract.supplier_list_status == "requested")).all()
+    return scs[0] if len(scs) == 1 else None
+
+
+def _iphone_photos_as_jpeg(a):
+    """iPhone photos (HEIC) become JPEGs so they can be previewed, checked and put in the download."""
+    from app.mail.provider import InAttachment
+    name = a.filename or ""
+    if not (name.lower().endswith((".heic", ".heif")) or (a.content_type or "").lower() in ("image/heic", "image/heif")):
+        return a
+    try:
+        import io
+
+        import pillow_heif
+        from PIL import Image
+        pillow_heif.register_heif_opener()
+        out = io.BytesIO()
+        Image.open(io.BytesIO(a.data)).convert("RGB").save(out, "JPEG", quality=90)
+        return InAttachment(name.rsplit(".", 1)[0] + ".jpg", "image/jpeg", out.getvalue())
+    except Exception:
+        log.warning("mail.heic_convert_failed", filename=name)
+        return a
 
 
 def _store(db: Session, mb: Mailbox, msg: Incoming, direction: str, status: str) -> EmailMessage:
@@ -494,7 +591,7 @@ def _store(db: Session, mb: Mailbox, msg: Incoming, direction: str, status: str)
     db.add(e)
     db.flush()
     folder = get_settings().data_dir / "emails" / str(e.id)
-    for a in msg.attachments:
+    for a in (_iphone_photos_as_jpeg(x) for x in msg.attachments):
         folder.mkdir(parents=True, exist_ok=True)
         safe = "".join(ch for ch in Path(a.filename).name if ch.isalnum() or ch in "._- ")[-150:] or "attachment"
         path = folder / safe
@@ -514,23 +611,25 @@ def _store(db: Session, mb: Mailbox, msg: Incoming, direction: str, status: str)
 # ---------------------------------------------------------------- acting on mail
 
 def receive_waiver_copy(db: Session, w: Waiver, e: EmailMessage, actor: str,
-                        attachment: EmailAttachment | None = None) -> bool:
-    """File the returned copy against the waiver and run the advisory check. When the sub has
-    suppliers, each attachment is checked: supplier waivers are filed under that supplier."""
-    from app.mail import verify
+                        attachment: EmailAttachment | None = None, files: list | None = None) -> bool:
+    """File the returned copy against the waiver and run the advisory check. Only usable files
+    count (not our own PDF, logos or empty files). When the sub has suppliers, each file is
+    checked: supplier waivers are filed under that supplier."""
+    from app.mail import replies, verify
     from app.suppliers import service as suppliers
     from app.waivers import service as waivers
 
     if w.status in (WaiverStatus.ACCEPTED, WaiverStatus.VOID):
         return False
+    if files is None and attachment is None:
+        files = replies.candidates(db, w, e)[0]
     if attachment is None and not w.supplier_id and suppliers.active(db, w.subcontract):
-        return _receive_with_suppliers(db, w, e, actor)
-    att = attachment or next((a for a in e.attachments if a.is_pdf), None) or \
-        next((a for a in e.attachments if a.is_image), None)
+        return _receive_with_suppliers(db, w, e, actor, files)
+    att = attachment or (files[0] if files else None)
     if att is None:
         return False
     data = filestore.read(db, att.path)
-    if data is None:
+    if not data:
         return False
     try:
         waivers.mark_received(db, w, actor, att.filename, data)
@@ -541,12 +640,12 @@ def receive_waiver_copy(db: Session, w: Waiver, e: EmailMessage, actor: str,
     if result.get("found") is not None and tmpl is not None and not tmpl.notary_required:
         result["problems"] = verify.compare(w, result["found"], notary_required=False)
         result["status"] = "issues" if result["problems"] else "looks_good"
-    w.verification = result | {"email_id": e.id}
+    w.verification = result | {"email_id": e.id, "attachment_id": att.id}
     waivers.log_event(db, w, actor, "checked", note=result.get("status"))
     return True
 
 
-def _receive_with_suppliers(db: Session, w: Waiver, e: EmailMessage, actor: str) -> bool:
+def _receive_with_suppliers(db: Session, w: Waiver, e: EmailMessage, actor: str, files: list | None = None) -> bool:
     """The sub's email may carry its suppliers' waivers too. Check each attachment; file the sub's
     own as its waiver and each supplier's under that supplier. Without the automatic check, the
     first attachment is taken as the sub's (as before)."""
@@ -554,13 +653,20 @@ def _receive_with_suppliers(db: Session, w: Waiver, e: EmailMessage, actor: str)
     from app.suppliers import service as suppliers
     from app.waivers import service as waivers
 
-    files = [a for a in e.attachments if a.is_pdf] + [a for a in e.attachments if a.is_image]
+    if files is None:
+        from app.mail import replies
+        files = replies.candidates(db, w, e)[0]
     own_filed = False
     for att in files:
         result = verify.verify(w, att)
         found = result.get("found")
-        if found is None:  # not checked (no API key, or an error): old behaviour for the first file
-            if not own_filed:
+        if found is None:
+            # Not checked (no API key, or an error). A file named after one of the sub's suppliers
+            # is that supplier's; otherwise the first one is taken as the sub's own.
+            s = suppliers.supplier_named_in(db, w.subcontract, att.filename)
+            if s is not None:
+                suppliers.file_supplier_waiver(db, w, s, att, result | {"found": {}}, actor)
+            elif not own_filed:
                 own_filed = receive_waiver_copy(db, w, e, actor, attachment=att)
             continue
         if found.get("is_supplier_waiver"):
@@ -582,7 +688,7 @@ def _receive_with_suppliers(db: Session, w: Waiver, e: EmailMessage, actor: str)
             waivers.mark_received(db, w, actor, att.filename, data)
         except ValueError:
             continue
-        w.verification = result | {"email_id": e.id}
+        w.verification = result | {"email_id": e.id, "attachment_id": att.id}
         waivers.log_event(db, w, actor, "checked", note=result.get("status"))
         own_filed = True
     return own_filed

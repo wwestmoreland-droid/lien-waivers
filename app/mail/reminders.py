@@ -30,9 +30,23 @@ def _local_date(dt: datetime) -> date:
     return dt.astimezone(tz).date()
 
 
-def _pending(db: Session, w: Waiver, kind: str) -> bool:
-    return db.scalar(select(EmailMessage.id).where(EmailMessage.waiver_id == w.id, EmailMessage.kind == kind,
-                                                   EmailMessage.status.in_(("draft", "queued", "sent")))) is not None
+def _pending(db: Session, w: Waiver, kind: str, since: datetime | None = None) -> bool:
+    q = select(EmailMessage.id).where(EmailMessage.waiver_id == w.id, EmailMessage.kind == kind,
+                                      EmailMessage.status.in_(("draft", "queued", "sent")))
+    if since is not None:
+        q = q.where(EmailMessage.created_at >= since)
+    return db.scalar(q.limit(1)) is not None
+
+
+def _clock_start(db: Session, w: Waiver) -> datetime:
+    """Reminders count from the request, or, after a copy is sent back, from the send-back."""
+    from app.db.models import WaiverEvent
+    if w.status == WaiverStatus.REJECTED:
+        ev = db.scalar(select(WaiverEvent).where(WaiverEvent.waiver_id == w.id, WaiverEvent.action == "rejected")
+                       .order_by(WaiverEvent.id.desc()))
+        if ev is not None:
+            return ev.at
+    return w.sent_at
 
 
 def run(db: Session, today: date | None = None) -> dict:
@@ -43,25 +57,30 @@ def run(db: Session, today: date | None = None) -> dict:
     reminder_days = sorted(int(d) for d in get_setting(db, "reminder_days"))[:2]
     escalation_day = int(get_setting(db, "escalation_day"))
     waivers = db.scalars(select(Waiver).join(Subcontract).join(Project).where(
-        Project.is_tracked.is_(True), Waiver.status == WaiverStatus.SENT.value, Waiver.sent_at.is_not(None),
-        Waiver.supplier_id.is_(None)))
+        Project.is_tracked.is_(True), Waiver.status.in_((WaiverStatus.SENT.value, WaiverStatus.REJECTED.value)),
+        Waiver.sent_at.is_not(None), Waiver.supplier_id.is_(None)))
     for w in waivers:
-        age = (today - _local_date(w.sent_at)).days
+        start = _clock_start(db, w)
+        since = start if w.status == WaiverStatus.REJECTED else None
+        age = (today - _local_date(start)).days
         root = outbound.thread_root(db, w)
         if age >= escalation_day and not w.escalated_at and not _pending(db, w, "escalation"):
             e = outbound.draft_escalation(db, w)
             if e:
                 outbound.maybe_auto_send(db, e)
                 stats["escalation"] += 1
-        if root is None:
-            continue
+        done = 0 if since else (w.reminder_count or 0)  # after a send-back the reminders start over
         for n, day in enumerate(reminder_days, start=1):
             kind = f"reminder_{n}"
-            if age >= day and (w.reminder_count or 0) < n and not _pending(db, w, kind):
+            if age >= day and done < n and not _pending(db, w, kind, since):
                 # Only the latest reminder that's due, so a long-overdue waiver doesn't get two at once.
                 if n < len(reminder_days) and age >= reminder_days[n]:
                     continue
-                e = outbound.draft_reply(db, root, kind, attach_waiver=(n == 1), everyone=True)
+                if root is None:
+                    # Marked sent by hand, so there's no email to reply to: send it as a new email.
+                    e = outbound.draft_new_reminder(db, w, kind)
+                else:
+                    e = outbound.draft_reply(db, root, kind, attach_waiver=(n == 1), everyone=True)
                 outbound.maybe_auto_send(db, e)
                 stats[kind] += 1
     stats["supplier_list_reminder"] = _supplier_list_reminders(db, today, reminder_days)

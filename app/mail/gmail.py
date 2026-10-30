@@ -203,7 +203,7 @@ class GmailProvider:
 
     METADATA_HEADERS = ["From", "To", "Cc", "Reply-To", "Subject", "Date", "Delivered-To", "X-Forwarded-To",
                         "X-Original-To", "List-Unsubscribe", "List-Id", "Precedence", "Auto-Submitted",
-                        "X-Autoreply", "X-Autorespond", "Content-Type", "Message-ID"]
+                        "X-Autoreply", "X-Autorespond", "Content-Type", "Message-ID", "In-Reply-To", "References"]
 
     def get_metadata(self, message_id: str) -> Incoming:
         data = self._call("GET", f"/messages/{message_id}", params={
