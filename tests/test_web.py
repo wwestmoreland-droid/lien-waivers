@@ -130,8 +130,9 @@ def test_waiver_pages_and_actions(client, db, source):
     r = client.post(f"/waivers/{w.id}/through-date", data={"value": "2026-10-01"}, follow_redirects=False)
     assert "msg=" in r.headers["location"]
 
-    # Jobs page shows the waiver summary.
-    assert "Unconditional partial accepted" in client.get(f"/jobs/{PROJECT}").text
+    # The job page's sub card shows the waiver that counts.
+    page = client.get(f"/jobs/{PROJECT}").text
+    assert "Unconditional partial, signed" in page and '<span class="badge ok">accepted</span>' in page
 
 
 def test_conditional_partial_flag_needs_template(client, db):
@@ -431,3 +432,51 @@ def test_job_download_with_no_signed_waivers_is_a_cover_page(client, db):
         assert r.status_code == 200
         pdf = PdfReader(io.BytesIO(r.content))
         assert len(pdf.pages) == 1 and "No signed waiver yet" in pdf.pages[0].extract_text()
+
+
+
+def test_job_page_sub_cards_and_unconditional_final(client, db, source):
+    from app.db.models import EmailMessage, Subcontract, Waiver
+    from app.mail import mailboxes
+    from app.mail.fake import FakeMailProvider
+
+    FakeMailProvider.reset()
+    mailboxes.set_provider_factory(lambda mb: FakeMailProvider(mb.email))
+    try:
+        sync_runner.sync_now("test")
+        client.post(f"/projects/{PROJECT}/track")
+        mailboxes.connect(db, "contracts@buildoutpros.com", "sender", "tok", "gmail.modify gmail.send", "admin")
+        db.commit()
+        page = client.get(f"/jobs/{PROJECT}").text
+        # One card per sub: cost to complete, invoice, waiver, the supplier checkbox next to the name.
+        assert page.count('class="subcard"') >= 5 and "Cost to complete" in page and "Latest invoice" in page
+        assert "Track suppliers" in page and "Send unconditional final" in page
+        assert "Signed waivers by sub" not in page and "Retainage held" in page
+        delta = db.scalar(select(Subcontract).where(Subcontract.source_row_id == 101))
+        assert "Cost to complete is still" in page  # warned: Delta isn't paid in full
+
+        r = client.post(f"/subs/{delta.id}/unconditional-final", data={"send": "1", "back": f"/jobs/{PROJECT}#subs"})
+        assert r.status_code == 200 and "Sent the unconditional final to Delta Fire Systems" in r.text
+        uf = db.scalar(select(Waiver).where(Waiver.subcontract_id == delta.id, Waiver.type == "UNCONDITIONAL_FINAL"))
+        assert uf.status == "sent" and uf.payable.paid_date is not None
+        box = FakeMailProvider.boxes["contracts@buildoutpros.com"]
+        assert box.sent and box.sent[-1].attachments and "ap@deltafire.com" in box.sent[-1].to
+        # Only one: asking again explains instead of making a second.
+        r = client.post(f"/subs/{delta.id}/unconditional-final", data={"send": "1", "back": f"/jobs/{PROJECT}"})
+        assert "already has an unconditional final" in r.text
+        assert len(db.scalars(select(Waiver).where(Waiver.subcontract_id == delta.id,
+                                                   Waiver.type == "UNCONDITIONAL_FINAL")).all()) == 1
+        # "Put it in Ready to send" leaves it for Today.
+        ridge = db.scalar(select(Subcontract).where(Subcontract.source_row_id == 102))
+        r = client.post(f"/subs/{ridge.id}/unconditional-final", data={"send": "", "back": f"/jobs/{PROJECT}"})
+        assert "ready under Ready to send" in r.text
+        rw = db.scalar(select(Waiver).where(Waiver.subcontract_id == ridge.id, Waiver.type == "UNCONDITIONAL_FINAL"))
+        assert db.scalar(select(EmailMessage).where(EmailMessage.waiver_id == rw.id)).status == "draft"
+        assert "Ridge Plumbing" in client.get("/").text.split("Signed copies back")[0]
+        # A sub with nothing paid can't get one.
+        zero = db.scalar(select(Subcontract).where(Subcontract.source_row_id == 106))
+        if zero is not None:
+            r = client.post(f"/subs/{zero.id}/unconditional-final", data={"send": "1"})
+            assert "no paid invoice" in r.text
+    finally:
+        mailboxes.set_provider_factory(None)

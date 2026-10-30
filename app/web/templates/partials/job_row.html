@@ -17,7 +17,8 @@
     <div class="job-subs">
       {% for r in subs or [] %}{% set w = r.waiver %}
       <div class="job-sub">
-        <div class="job-sub-line"><a href="/subs/{{ r.sc.id }}">{{ r.sc.vendor.name }}</a>
+        <div class="job-sub-line"><span class="sub-name"><a href="/subs/{{ r.sc.id }}">{{ r.sc.vendor.name }}</a>
+          {% with sc=r.sc, back='/jobs' %}{% include "partials/supplier_switch.html" %}{% endwith %}</span>
           <span class="small">{% if w %}{{ WaiverType(w.type).label }}{% if not WaiverType(w.type).is_final and w.through_date %} through {{ w.through_date|fdate }}{% endif %}, signed{% else %}<span class="muted">No signed waiver yet</span>{% endif %}</span></div>
         {% with back='/jobs' %}{% include "partials/suppliers.html" %}{% endwith %}
       </div>
