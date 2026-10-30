@@ -15,7 +15,7 @@ from app.db.models import SyncRun
 from app.db.session import SessionLocal
 from app.jobs import scheduler
 from app.logs import configure_logging
-from app.web import contacts_routes, email_routes, routes, waiver_routes
+from app.web import contacts_routes, email_routes, routes, today_routes, waiver_routes
 from app.web.security import SecurityMiddleware, locked_app, production_problems
 from app.web.templating import templates
 
@@ -44,6 +44,7 @@ def create_app() -> FastAPI:
                        https_only=s.app_base_url.startswith("https"), max_age=60 * 60 * 12)
     app.mount("/static", StaticFiles(directory=str(Path(routes.__file__).parent / "static")), name="static")
     app.include_router(auth.router)
+    app.include_router(today_routes.router)
     app.include_router(routes.router)
     app.include_router(waiver_routes.router)
     app.include_router(email_routes.router)

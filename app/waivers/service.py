@@ -598,3 +598,78 @@ def combined_signed_pdf(db: Session, waivers: list[Waiver]) -> bytes:
     buf = io.BytesIO()
     out.write(buf)
     return buf.getvalue()
+
+
+def _cover_page(project: Project, entries: list[dict]) -> bytes:
+    """Page 1 of a job's waiver download: who's included and who's missing."""
+    import io
+
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    from xml.sax.saxutils import escape
+
+    styles = getSampleStyleSheet()
+    small = styles["BodyText"].clone("small", fontSize=9, leading=11)
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=letter, leftMargin=48, rightMargin=48, topMargin=48, bottomMargin=48,
+                            title=f"Lien waivers {project.number}")
+    today = now().astimezone(__import__("zoneinfo").ZoneInfo(get_settings().timezone)).date()
+    story = [Paragraph(f"Lien waivers: {escape(project.number)}", styles["Title"]),
+             Paragraph(escape(project.name or ""), styles["Heading3"]),
+             Paragraph(escape(project.address or ""), styles["BodyText"]),
+             Paragraph(f"Generated {today:%b} {today.day}, {today.year}", small), Spacer(1, 12)]
+    data = [[Paragraph("<b>Company</b>", small), Paragraph("<b>Waiver included</b>", small)]]
+    for e in entries:
+        name = ("&nbsp;&nbsp;&nbsp;&nbsp;" if e.get("supplier") else "") + escape(e["name"])
+        if e.get("supplier"):
+            name += f" <font size=7 color='#667085'>(supplier to {escape(e['parent'])})</font>"
+        w = e["waiver"]
+        if w is None:
+            what = "<b>No signed waiver yet</b>"
+        else:
+            bits = [WaiverType(w.type).label]
+            if w.amount is not None:
+                bits.append(f"${w.amount:,.2f}")
+            if w.through_date and not WaiverType(w.type).is_final:
+                bits.append(f"through {w.through_date:%b} {w.through_date.day}, {w.through_date.year}")
+            if w.received_at:
+                bits.append(f"received {w.received_at:%b} {w.received_at.day}, {w.received_at.year}")
+            what = escape(", ".join(bits))
+        data.append([Paragraph(name, small), Paragraph(what, small)])
+    if len(data) == 1:
+        data.append([Paragraph("No subcontracts on this job.", small), ""])
+    t = Table(data, colWidths=[230, 286], repeatRows=1)
+    t.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#d0d5dd")),
+                           ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f2f4f7")),
+                           ("VALIGN", (0, 0), (-1, -1), "TOP")]))
+    story.append(t)
+    doc.build(story)
+    return buf.getvalue()
+
+
+def job_packet_entries(db: Session, project: Project, include_suppliers: bool = False) -> list[dict]:
+    """Cover-page rows in download order: subs alphabetically (suppliers under each, when asked)."""
+    entries = []
+    for r in job_waiver_rows(db, project):
+        entries.append({"name": r["sc"].vendor.name, "waiver": r["waiver"], "supplier": False})
+    return entries
+
+
+def job_waiver_packet(db: Session, project: Project, include_suppliers: bool = False) -> bytes:
+    """A cover page listing everyone (and who's missing), then each signed waiver from a new page."""
+    import io
+
+    from pypdf import PdfReader, PdfWriter
+
+    entries = job_packet_entries(db, project, include_suppliers)
+    out = PdfWriter()
+    out.append(PdfReader(io.BytesIO(_cover_page(project, entries))), outline_item="Cover: who's included")
+    waivers = [e["waiver"] for e in entries if e["waiver"] is not None]
+    if waivers:
+        # combined_signed_pdf bookmarks each waiver; append keeps those bookmarks.
+        out.append(PdfReader(io.BytesIO(combined_signed_pdf(db, waivers))))
+    buf = io.BytesIO()
+    out.write(buf)
+    return buf.getvalue()

@@ -73,13 +73,15 @@ def test_best_signed_waiver_and_download(mail):
 
     with TestClient(create_app()) as c:
         page = c.get(f"/jobs/{PROJECT}")
-        assert "Download all signed waivers" in page.text and "not reviewed yet" in page.text
+        assert "Download waivers" in page.text and "not reviewed yet" in page.text
         r = c.get(f"/jobs/{PROJECT}/signed-waivers.pdf")
         assert r.status_code == 200 and r.headers["content-type"] == "application/pdf"
         pdf = PdfReader(io.BytesIO(r.content))
         texts = [p.extract_text() for p in pdf.pages]
-        assert len(pdf.pages) == 2  # Delta's conditional final + Ridge's photo, one page each
-        assert "Delta cond final" in texts[0]
+        assert len(pdf.pages) == 3  # cover + Delta's conditional final + Ridge's photo
+        assert "No signed waiver yet" in texts[0] and "Delta Fire Systems" in texts[0]  # who's missing, up front
+        assert "Delta cond final" in texts[1]
+        assert f"Lien waivers {PROJECT}" in r.headers["content-disposition"]
         # The waiver page and list show the signed copy, not the one we generated.
         detail = c.get(f"/waivers/{cf.id}")
         assert f"/waivers/{cf.id}/signed" in detail.text and "Open signed copy" in detail.text

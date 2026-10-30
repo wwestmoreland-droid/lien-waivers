@@ -1,0 +1,49 @@
+{# One tracked job on the Jobs page. Expects: p, g (CTC totals or none), open_n, blocked_n, subs. #}
+<div class="job" id="job-{{ p.id }}" {% if oob %}hx-swap-oob="afterbegin:#tracked-list"{% endif %}>
+  <details class="job-d">
+    <summary class="job-sum">
+      <span class="job-name"><a href="/jobs/{{ p.number }}">{{ p.number }}</a> <span>{{ p.name or '' }}</span>
+        <span class="small muted">{{ p.pm_name or 'No PM' }}</span></span>
+      {% if g %}
+      <span class="job-num"><span class="lbl">Contract</span>{{ g.revised_contract|money }}</span>
+      <span class="job-num"><span class="lbl">Billed</span>{{ g.billed|money }}</span>
+      <span class="job-num"><span class="lbl">Cost to complete</span>{{ g.ctc|money }}</span>
+      <span class="job-num"><span class="lbl">Complete</span>{{ g.pct_complete|pct or '–' }}</span>
+      {% else %}<span class="job-num muted small">History is loading. No emails for past activity.</span>{% endif %}
+      <span class="job-num"><span class="lbl">Open waivers</span>{{ open_n or 0 }}
+        {% if blocked_n %}<span class="badge bad">{{ blocked_n }} blocked</span>{% endif %}
+        {% if g and g.over_billed %}<span class="badge bad">{{ g.over_billed }} over-billed</span>{% endif %}</span>
+    </summary>
+    <div class="job-subs">
+      {% for r in subs or [] %}{% set w = r.waiver %}
+      <div class="job-sub">
+        <a href="/subs/{{ r.sc.id }}">{{ r.sc.vendor.name }}</a>
+        <span class="small">{% if w %}{{ WaiverType(w.type).label }}{% if not WaiverType(w.type).is_final and w.through_date %} through {{ w.through_date|fdate }}{% endif %}, signed{% else %}<span class="muted">No signed waiver yet</span>{% endif %}</span>
+      </div>
+      {% else %}<div class="small muted">No subcontracts yet.</div>{% endfor %}
+    </div>
+  </details>
+  <div class="job-actions">
+    <details class="dl">
+      <summary class="btn">Download waivers</summary>
+      <form class="dl-form" method="get" action="/jobs/{{ p.number }}/signed-waivers.pdf">
+        <label><input type="checkbox" name="suppliers" value="1"> Include suppliers' waivers</label>
+        <button class="btn primary">Download PDF</button>
+      </form>
+    </details>
+    {% if user.role in ('Admin', 'AP') %}
+    <details class="menu">
+      <summary class="btn" aria-label="More for this job">⋯</summary>
+      <div class="menu-body">
+        {% if confirm_untrack %}
+        <div class="warnbox">{{ confirm_untrack }} open item{{ 's' if confirm_untrack != 1 }} on this job. Untracking pauses all automation for it.</div>
+        <button class="btn danger" hx-post="/projects/{{ p.number }}/untrack?view=jobs" hx-vals='{"confirm": "yes"}' hx-target="#job-{{ p.id }}" hx-swap="outerHTML">Untrack anyway</button>
+        {% else %}
+        <button class="btn" hx-post="/projects/{{ p.number }}/untrack?view=jobs" hx-target="#job-{{ p.id }}" hx-swap="outerHTML">Untrack this job</button>
+        {% endif %}
+      </div>
+    </details>
+    {% endif %}
+  </div>
+  {% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
+</div>

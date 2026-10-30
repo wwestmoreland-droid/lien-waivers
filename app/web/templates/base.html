@@ -13,17 +13,12 @@
   {% if user %}
   {% set path = request.url.path %}
   <nav>
-    <a href="/" class="{{ 'on' if path == '/' }}">Dashboard</a>
-    <a href="/projects" class="{{ 'on' if path.startswith('/projects') }}">Projects</a>
+    {% set n = today_count(user) %}
+    <a href="/" class="{{ 'on' if path == '/' }}">Today{% if n %} <span class="badge new">{{ n }}</span>{% endif %}</a>
     <a href="/jobs" class="{{ 'on' if path.startswith('/jobs') or path.startswith('/subs') }}">Jobs</a>
-    <a href="/waivers" class="{{ 'on' if path.startswith('/waivers') }}">Waivers</a>
-    {% set ob = outbox_count() %}
-    <a href="/email" class="{{ 'on' if path.startswith('/email') }}">Email{% if ob %} <span class="badge new">{{ ob }}</span>{% endif %}</a>
-    {% if user.role in ('Admin', 'AP') %}<a href="/contacts" class="{{ 'on' if path.startswith('/contacts') }}">Contacts</a>{% endif %}
-    <a href="/queues" class="{{ 'on' if path.startswith('/queues') }}">Queues</a>
-    <a href="/sync-runs" class="{{ 'on' if path.startswith('/sync-runs') }}">Sync log</a>
-    <a href="/settings" class="{{ 'on' if path.startswith('/settings') }}">Settings</a>
+    <a href="/more" class="{{ 'on' if not (path == '/' or path.startswith('/jobs') or path.startswith('/subs')) }}">More</a>
   </nav>
+  <div class="hdr-sync" hx-get="/sync/status" hx-trigger="load" hx-swap="innerHTML"></div>
   <div class="who">{{ user.email }} · {{ user.role }} · <a href="/logout">Sign out</a></div>
   {% endif %}
 </header>

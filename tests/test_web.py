@@ -258,3 +258,173 @@ def test_unsafe_settings_lock_the_app_instead_of_crashing():
 def test_database_url_quotes_and_spaces_are_cleaned():
     from app.config import Settings
     assert Settings(database_url=' "postgresql://u:p@h/db" ').database_url == "postgresql://u:p@h/db"
+
+
+# ---------------------------------------------------------------- simple interface (Today, Jobs, More)
+
+def _role(db, role):
+    from app.db.models import User
+    u = db.scalar(select(User))
+    u.role = role
+    db.commit()
+
+
+def test_today_empty_states_for_each_role(client, db):
+    client.get("/")
+    for role in ("Admin", "AP", "PM"):
+        _role(db, role)
+        r = client.get("/")
+        assert r.status_code == 200, role
+        assert "caught up" in r.text and "Nothing to check." in r.text and "No questions." in r.text
+        assert ("All sent." in r.text) == (role != "PM")  # PMs don't send
+        assert ">Today" in r.text and ">Jobs<" in r.text and ">More<" in r.text and ">Queues<" not in r.text
+
+
+@pytest.fixture
+def mailing(client, db, source):
+    from app.mail import mailboxes
+    from app.mail.fake import FakeMailProvider
+
+    FakeMailProvider.reset()
+    mailboxes.set_provider_factory(lambda mb: FakeMailProvider(mb.email))
+    sync_runner.sync_now("test")
+    client.post(f"/projects/{PROJECT}/track")
+    mailboxes.connect(db, "contracts@buildoutpros.com", "sender", "tok", "gmail.modify gmail.send", "admin")
+    db.commit()
+    yield FakeMailProvider.boxes["contracts@buildoutpros.com"]
+    mailboxes.set_provider_factory(None)
+
+
+def _pay(source, row_id, day="2026-10-22"):
+    source.row("ar_ap", row_id).values["paid_date"] = day
+    sync_runner.sync_now("test")
+
+
+def test_send_and_send_all_from_today(client, db, source, mailing):
+    from app.db.models import EmailMessage
+    from app.waivers import service
+    _pay(source, 1003)
+    r = client.get("/")
+    assert "Ready to send" in r.text and "Delta Fire Systems" in r.text and "Paid 10/22" in r.text
+    e = db.scalar(select(EmailMessage).where(EmailMessage.kind == "waiver_request"))
+    r = client.post(f"/email/{e.id}/send", data={"back": "/"})
+    assert r.status_code == 200 and str(r.url).endswith("/?msg=Sent.") and len(mailing.sent) == 1
+    # More from past invoices (subs with a billing email), then Send all.
+    ready = [x.payable.id for x in service.past_paid_invoices(db)
+             if x.can_prepare and (x.sc.billing_email or x.sc.vendor.billing_email)]
+    service.prepare_past(db, ready, "ap")
+    db.commit()
+    assert len(ready) >= 2
+    r = client.post("/today/send-all")
+    assert f"Sent {len(ready)}." in r.text and len(mailing.sent) == 1 + len(ready) and "All sent." in r.text
+
+
+def test_cant_send_shows_the_reason(client, db, source, mailing):
+    from app.db.models import EmailMessage
+    _pay(source, 1003)
+    e = db.scalar(select(EmailMessage).where(EmailMessage.kind == "waiver_request"))
+    e.to_addrs = []
+    db.commit()
+    r = client.get("/")
+    assert "No email address for this sub." in r.text and ">Fix<" in r.text
+    client.post("/today/send-all")
+    assert mailing.sent == []
+
+
+def test_accept_and_send_back_from_today(client, db, source, mailing):
+    from app.db.models import EmailMessage, Waiver
+    from app.waivers import service
+    from app.waivers.types import WaiverStatus
+    _pay(source, 1003)
+    ready = [x.payable.id for x in service.past_paid_invoices(db) if x.can_prepare][:1]
+    service.prepare_past(db, ready, "ap")
+    db.commit()
+    w1, w2 = db.scalars(select(Waiver).order_by(Waiver.id)).all()[:2]
+    for w in (w1, w2):
+        service.mark_sent(db, w, "ap")
+        service.mark_received(db, w, "ap", "signed.pdf", b"%PDF-1.4 signed")
+    w2.verification = {"status": "issues", "problems": ["the notary section is blank"]}
+    db.commit()
+    page = client.get("/").text
+    assert "Signed copies back" in page and "Accept anyway" in page and "Problem:" in page
+    r = client.post(f"/waivers/{w1.id}/accept", data={"back": "/"})
+    assert "Accepted" in r.text
+    r = client.post(f"/waivers/{w2.id}/reject", data={"back": "/", "reason": "the notary section is blank"})
+    assert "Sent back" in r.text
+    db.expire_all()
+    assert db.get(Waiver, w1.id).status == WaiverStatus.ACCEPTED
+    assert db.get(Waiver, w2.id).status == WaiverStatus.REJECTED
+    assert "Waiting for a corrected copy." in client.get("/").text
+
+
+def test_answer_questions_from_today(client, db, source):
+    from app.db.models import DirectPurchase, ReviewItem
+    from app.services.reviews import upsert_review
+    sync_runner.sync_now("test")
+    client.post(f"/projects/{PROJECT}/track")
+    # Direct purchase: a vendor billing the job with no subcontract.
+    bp = db.scalar(select(Payable).where(Payable.source_row_id == 1010))
+    bp.match_status = "no_subcontract"
+    db.commit()
+    page = client.get("/").text
+    assert "Material only?" in page and "Yes, no waiver needed" in page
+    r = client.post(f"/queues/payables/{bp.id}/direct-purchase", data={"back": "/", "scope": "job"})
+    assert "No waiver needed" in r.text and db.scalar(select(DirectPurchase))
+    # Retention: is this the retention invoice?
+    p = db.scalar(select(Payable).where(Payable.source_row_id == 1003))
+    upsert_review(db, "retention_check", "payable", p.id, PROJECT, "hit zero", True)
+    db.commit()
+    assert "their retention invoice?" in client.get("/").text
+    r = client.post(f"/payables/{p.id}/retention", data={"back": "/", "value": "yes"})
+    assert r.status_code == 200 and str(r.url).startswith("http://testserver/?msg=")
+    db.expire_all()
+    assert db.get(Payable, p.id).is_retention_invoice
+    # "No, send to PM" hands it to the job's PM and takes it off AP's Today.
+    p2 = db.scalar(select(Payable).where(Payable.source_row_id == 1001))
+    upsert_review(db, "retention_check", "payable", p2.id, PROJECT, "hit zero", True)
+    proj = db.scalar(select(Project).where(Project.number == PROJECT))
+    proj.pm_email = "pm@buildoutpros.com"
+    db.commit()
+    item = db.scalar(select(ReviewItem).where(ReviewItem.ref_id == p2.id, ReviewItem.kind == "retention_check"))
+    client.post(f"/queues/review/{item.id}/to-pm")
+    db.expire_all()
+    assert db.get(ReviewItem, item.id).assignee_email == "pm@buildoutpros.com"
+    assert "Pay App 1" not in client.get("/").text.split("Quick questions")[1].split("Waiting on subs")[0]
+
+
+def test_jobs_page_tracked_and_untracked_and_track(client, db):
+    sync_runner.sync_now("test")
+    r = client.get("/jobs")
+    assert "No jobs tracked yet" in r.text and "other active project" in r.text and PROJECT in r.text
+    r = client.post(f"/projects/{PROJECT}/track?view=jobs")
+    assert r.status_code == 200 and 'hx-swap-oob="afterbegin:#tracked-list"' in r.text and "History is loading" in r.text
+    db.expire_all()
+    assert db.scalar(select(Project).where(Project.number == PROJECT)).is_tracked
+    r = client.get("/jobs")
+    assert "Download waivers" in r.text and "Cost to complete" in r.text
+    assert client.get("/jobs?q=nothing-matches").text.count("job-sum") == 0
+    r = client.get("/jobs?show=untracked")
+    assert "<details class=\"others\" open" in r.text
+
+
+def test_projects_redirects_and_old_urls_still_load(client, db):
+    sync_runner.sync_now("test")
+    client.post(f"/projects/{PROJECT}/track")
+    r = client.get("/projects", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/jobs?show=untracked"
+    for path in ("/queues", "/email", "/waivers", "/more", "/reports/ctc", "/reports/ctc?by=sub", f"/jobs/{PROJECT}",
+                 "/jobs?by=pm", "/settings", "/sync-runs", "/waivers-past", "/contacts"):
+        assert client.get(path).status_code == 200, path
+
+
+def test_job_download_with_no_signed_waivers_is_a_cover_page(client, db):
+    import io
+
+    from pypdf import PdfReader
+    sync_runner.sync_now("test")
+    client.post(f"/projects/{PROJECT}/track")
+    for q in ("", "?suppliers=1"):
+        r = client.get(f"/jobs/{PROJECT}/signed-waivers.pdf{q}")
+        assert r.status_code == 200
+        pdf = PdfReader(io.BytesIO(r.content))
+        assert len(pdf.pages) == 1 and "No signed waiver yet" in pdf.pages[0].extract_text()

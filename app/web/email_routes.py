@@ -34,6 +34,7 @@ from app.services.settings_store import get_setting, set_setting
 from app.waivers import service as waiver_service
 from app.waivers.types import OPEN_STATUSES, WaiverStatus, WaiverType
 from app.web.security import safe_file_response
+from app.web.nav import safe_back, with_msg
 from app.web.templating import templates
 
 EDITORS = ("Admin", "AP")
@@ -331,21 +332,29 @@ def save_draft(eid: int, to: str = Form(""), cc: str = Form(""), subject: str = 
     return RedirectResponse(f"/email/{eid}/edit?msg=Saved", status_code=303)
 
 
-def _send_one(db: Session, e: EmailMessage, user: User):
+def _send_one(db: Session, e: EmailMessage, user: User, back: str = ""):
     try:
         ok = outbound.send(db, e, user.email)
     except ValueError as exc:
         db.rollback()
+        if back:
+            return RedirectResponse(with_msg(safe_back(back, "/"), str(exc)), status_code=303)
         return RedirectResponse(f"/email/{e.id}/edit?msg=" + quote(str(exc)), status_code=303)
     db.commit()
     if not ok:
+        if back:
+            return RedirectResponse(with_msg(safe_back(back, "/"), f"Not sent: {e.error or 'unknown problem'}"),
+                                    status_code=303)
         return RedirectResponse(f"/email/{e.id}/edit?msg=" + quote(e.error or "Not sent"), status_code=303)
+    if back:
+        return RedirectResponse(with_msg(safe_back(back, "/"), "Sent."), status_code=303)
     return RedirectResponse("/email?view=outbox&sent=1", status_code=303)
 
 
 @router.post("/email/{eid}/send")
-def send_one(eid: int, db: Session = Depends(get_db), user: User = Depends(require_role(*EDITORS))):
-    return _send_one(db, _email(db, eid), user)
+def send_one(eid: int, back: str = Form(""), db: Session = Depends(get_db),
+             user: User = Depends(require_role(*EDITORS))):
+    return _send_one(db, _email(db, eid), user, back)
 
 
 @router.post("/email/send-selected")

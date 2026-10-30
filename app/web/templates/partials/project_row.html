@@ -21,7 +21,7 @@
         <button class="btn sm" hx-post="/projects/{{ p.number }}/untrack" hx-target="#proj-{{ p.id }}" hx-swap="outerHTML">Untrack</button>
         {% endif %}
       {% else %}
-        <button class="btn sm primary" hx-post="/projects/{{ p.number }}/track" hx-target="#proj-{{ p.id }}" hx-swap="outerHTML">Track</button>
+        <button class="btn sm primary" hx-post="/projects/{{ p.number }}/track{{ '?view=jobs' if jobs_view }}" hx-target="#proj-{{ p.id }}" hx-swap="outerHTML">Track</button>
       {% endif %}
     {% endif %}
     {% if flash %}<div class="flash">{{ flash }}</div>{% endif %}

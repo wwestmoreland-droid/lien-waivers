@@ -1,37 +1,30 @@
 {% extends "base.html" %}
 {% block title %}Jobs{% endblock %}
 {% block content %}
-<div class="row-actions" style="justify-content: space-between">
-  <div><h1>Cost to complete</h1>
-  <p class="sub">Computed by the app from approved payables and approved Internal change orders. Hold and Rejected rows are not billed.</p></div>
-  <div class="row-actions"><a class="btn" href="/reports/ctc.csv">CSV</a><a class="btn" href="/reports/ctc.xlsx">XLSX</a></div>
-</div>
+<h1>Jobs</h1>
+{% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
+<form class="filters" method="get">
+  <input type="search" name="q" value="{{ q }}" placeholder="Search number, name, client or PM" class="grow">
+  <button class="btn">Search</button>{% if q %}<a class="small" href="/jobs">Clear</a>{% endif %}
+</form>
 
-<div class="tabs">
-  <a href="/jobs?by=job" class="{{ 'on' if by == 'job' }}">By job</a>
-  <a href="/jobs?by=sub" class="{{ 'on' if by == 'sub' }}">By sub</a>
-  <a href="/jobs?by=pm" class="{{ 'on' if by == 'pm' }}">By PM</a>
-</div>
-
-<div class="table-wrap">
-<table>
-  <tr><th>{{ {'job': 'Project', 'sub': 'Sub', 'pm': 'PM'}[by] }}</th><th class="n">Original</th><th class="n">Approved COs</th><th class="n">Pending COs</th><th class="n">Revised contract</th><th class="n">Billed</th><th class="n">Paid</th><th class="n">Retainage held</th><th class="n">On hold</th><th class="n">CTC</th><th class="n">% complete</th><th class="n">Subcontracts</th></tr>
-  {% for g in groups %}
-  <tr>
-    <td>{% if by == 'job' %}<a href="/jobs/{{ g.key }}">{{ g.key }}</a><div class="small muted">{{ g.label }}</div>{% else %}{{ g.key }}{% endif %}</td>
-    <td class="n">{{ g.original_contract|money }}</td><td class="n">{{ g.approved_cos|money }}</td><td class="n">{{ g.pending_cos|money }}</td>
-    <td class="n">{{ g.revised_contract|money }}</td><td class="n">{{ g.billed|money }}</td><td class="n">{{ g.paid|money }}</td>
-    <td class="n">{{ g.retainage_held|money }}</td><td class="n">{{ g.hold|money }}</td><td class="n">{{ g.ctc|money }}</td>
-    <td class="n">{{ g.pct_complete|pct }}</td><td class="n">{{ g.count }}{% if g.over_billed %} <span class="badge bad">{{ g.over_billed }} over</span>{% endif %}</td>
-  </tr>
+<div id="tracked-list">
+  {% for p in tracked %}
+    {% with g=groups.get(p.number), open_n=open_waivers.get(p.number), blocked_n=blocked.get(p.number), subs=subs.get(p.number) %}
+      {% include "partials/job_row.html" %}
+    {% endwith %}
   {% else %}
-  <tr><td colspan="12" class="muted">Nothing tracked yet.</td></tr>
+  <div class="empty">{{ 'No tracked jobs match.' if q else 'No jobs tracked yet. Pick one below.' }}</div>
   {% endfor %}
-</table>
 </div>
 
-{% if by != 'job' %}
-<h2>Detail</h2>
-{% include "partials/ctc_rows.html" %}
-{% endif %}
+<details class="others" {{ 'open' if show_untracked }}>
+  <summary>{{ others|length }} other active project{{ 's' if others|length != 1 }} {{ "aren't" if others|length != 1 else "isn't" }} tracked.</summary>
+  <p class="small muted">Active means INTAKE status {{ statuses_label }}. Change which statuses count on <a href="/settings">Settings</a>.</p>
+  <div class="table-wrap"><table>
+    <tr><th>Project #</th><th>Name</th><th>Client</th><th>State</th><th>Status</th><th>PM</th><th class="n"># subs</th><th class="n">Subcontract value</th><th>Tracking</th></tr>
+    {% for p in others %}{% include "partials/project_row.html" %}{% else %}
+    <tr><td colspan="9" class="muted">Nothing else is active.</td></tr>{% endfor %}
+  </table></div>
+</details>
 {% endblock %}
