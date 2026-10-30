@@ -300,3 +300,33 @@ def test_supplier_partial_is_checked_against_the_previous_pay_app(mail, monkeypa
     sw = db.scalar(select(Waiver).where(Waiver.supplier_id == abc.id))
     assert str(sw.through_date) == "2026-09-30"
     assert sw.verification["problems"] == ["the date should be Sep 30, 2026"]
+
+
+def test_labor_only_and_material_only_subs_get_no_supplier_requests(mail):
+    db = mail.db
+    delta, ridge = sub(db, 101), sub(db, 102)
+    abc = suppliers.add(db, delta, "ap", "ABC Supply")
+    db.commit()
+    delta_list = db.scalar(select(EmailMessage).where(EmailMessage.token == f"SD-{delta.id}"))
+    ridge_list = db.scalar(select(EmailMessage).where(EmailMessage.token == f"SD-{ridge.id}"))
+    # All Subcontracts now says Delta is Material only and Ridge is Labor only.
+    mail.source.row("subcontracts", 101).values["supplier_contractor"] = "Material"
+    mail.source.row("subcontracts", 102).values["supplier_contractor"] = "Labor"
+    run_sync(db, mail.source, trigger="test")
+    db.expire_all()
+    delta, ridge = db.get(Subcontract, delta.id), db.get(Subcontract, ridge.id)
+    assert suppliers.excluded_reason(delta) == "Material only" and suppliers.excluded_reason(ridge) == "Labor only"
+    assert not suppliers.is_major_trade(db, delta) and not suppliers.is_major_trade(db, ridge)
+    assert db.get(EmailMessage, delta_list.id).status == db.get(EmailMessage, ridge_list.id).status == "discarded"
+    # Their waiver requests don't ask for supplier waivers, and their box is greyed out with the reason.
+    w, e = send_request(mail)
+    assert "suppliers" not in e.body_text
+    with TestClient(create_app()) as c:
+        page = c.get(f"/jobs/{PROJECT}").text
+        assert "No suppliers (Material only)" in page and "No suppliers (Labor only)" in page
+        r = c.post(f"/subs/{delta.id}/track-suppliers", data={"on": "1", "back": f"/jobs/{PROJECT}"})
+        assert "Material only in All Subcontracts" in r.text
+    # Labor & Material subs are still asked.
+    tri = sub(db, 104)
+    assert suppliers.excluded_reason(tri) is None and suppliers.is_major_trade(db, tri)
+    assert db.get(Supplier, abc.id).status == "active"  # nothing deleted

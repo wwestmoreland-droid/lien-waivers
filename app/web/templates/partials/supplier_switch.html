@@ -1,5 +1,8 @@
 {# The "Track suppliers" checkbox for one sub. Expects sc and back. #}
-{% if user.role in ('Admin', 'AP') %}
+{% set no_sup = {'labor': 'Labor only', 'material': 'Material only'}.get((sc.supplier_contractor or '')|trim|lower) %}
+{% if no_sup %}
+<span class="sup-switch small muted" title="Set in All Subcontracts (Supplier / Contractor)"><input type="checkbox" disabled> No suppliers ({{ no_sup }})</span>
+{% elif user.role in ('Admin', 'AP') %}
 <form method="post" action="/subs/{{ sc.id }}/track-suppliers" class="sup-switch" onclick="event.stopPropagation()">
   <input type="hidden" name="back" value="{{ back }}">
   <label class="small" title="Ask this sub for its suppliers and their waivers"><input type="checkbox" name="on" value="1" {{ 'checked' if sc.track_suppliers }} onchange="this.form.submit()"> Track suppliers</label>

@@ -33,6 +33,11 @@ UNMATCHED = ("unmatched_vendor", "no_subcontract", "ambiguous")
 OUTBOX = ("draft", "queued", "failed")
 
 
+def suppliers_tracked():
+    from app.suppliers.service import tracked_sql
+    return tracked_sql()
+
+
 def local_today() -> date:
     return datetime.now(ZoneInfo(get_settings().timezone)).date()
 
@@ -221,7 +226,7 @@ def quick_questions(db: Session, user) -> list[Question]:
     from app.db.models import SupplierCandidate
     for c in db.scalars(select(SupplierCandidate).join(Subcontract).join(Project).where(
             SupplierCandidate.status == "pending", Project.is_tracked.is_(True),
-            Subcontract.track_suppliers.is_(True)).order_by(SupplierCandidate.id)):
+            suppliers_tracked()).order_by(SupplierCandidate.id)):
         bits = ", ".join(x for x in (c.supplies, f"~${c.approx_amount:,.0f}" if c.approx_amount else None) if x)
         qs.append(Question("candidate", f"{e(c.subcontract.vendor.name)} lists <strong>{e(c.name)}</strong>"
                                         f"{' (' + e(bits) + ')' if bits else ''}. Add as their supplier?", False,
@@ -299,7 +304,7 @@ def next_step(db: Session, w: Waiver, today: date | None = None) -> str:
 def waiting_lists(db: Session) -> list[Subcontract]:
     """Supplier lists asked for and not back yet."""
     return list(db.scalars(select(Subcontract).join(Project).where(
-        Project.is_tracked.is_(True), Subcontract.track_suppliers.is_(True), Subcontract.supplier_list_status == "requested",
+        Project.is_tracked.is_(True), suppliers_tracked(), Subcontract.supplier_list_status == "requested",
         Subcontract.supplier_list_requested_at.is_not(None)).order_by(Subcontract.supplier_list_requested_at)))
 
 
