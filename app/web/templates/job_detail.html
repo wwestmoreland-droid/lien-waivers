@@ -11,7 +11,7 @@
     <details class="dl">
       <summary class="btn primary">Download waivers</summary>
       <form class="dl-form" method="get" action="/jobs/{{ p.number }}/signed-waivers.pdf">
-        <label><input type="checkbox" name="suppliers" value="1"> Include suppliers' waivers</label>
+        {% if p.track_suppliers %}<label><input type="checkbox" name="suppliers" value="1"> Include suppliers' waivers</label>{% endif %}
         <button class="btn primary">Download PDF</button>
       </form>
     </details>
@@ -22,6 +22,7 @@
 {% with show_project=false %}{% include "partials/ctc_rows.html" %}{% endwith %}
 
 <h2 id="waivers">Signed waivers by sub</h2>
+{% with back='/jobs/' ~ p.number ~ '#waivers' %}{% include "partials/supplier_switch.html" %}{% endwith %}
 <p class="small muted">For each sub: their latest invoice, and the signed waiver that counts: the unconditional final if there is one, otherwise the conditional final, otherwise the most recent partial. "Download waivers" puts these in one PDF after a cover page listing who's missing.</p>
 <div class="table-wrap"><table>
   <tr><th>Sub</th><th>Latest invoice</th><th>Signed waiver on file</th><th></th></tr>

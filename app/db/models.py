@@ -87,6 +87,8 @@ class Project(Base):
     tracked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     ever_tracked: Mapped[bool] = mapped_column(Boolean, default=False)
     backfilled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Unticked on a job: no supplier lists, supplier waivers or supplier lines in emails there.
+    track_suppliers: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
 
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

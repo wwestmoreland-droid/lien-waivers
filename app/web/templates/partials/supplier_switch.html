@@ -1,0 +1,8 @@
+{# "Track suppliers on this job" checkbox. Expects p and back. #}
+{% if user.role in ('Admin', 'AP') %}
+<form method="post" action="/jobs/{{ p.number }}/suppliers" class="sup-switch">
+  <input type="hidden" name="back" value="{{ back }}">
+  <label class="small"><input type="checkbox" name="on" value="1" {{ 'checked' if p.track_suppliers }} onchange="this.form.submit()"> Track suppliers on this job</label>
+  <noscript><button class="btn sm">Save</button></noscript>
+</form>
+{% elif not p.track_suppliers %}<span class="small muted">Suppliers not tracked on this job</span>{% endif %}

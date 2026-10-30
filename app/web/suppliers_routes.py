@@ -88,3 +88,23 @@ def answer_candidate(cid: int, answer: str, back: str = Form(""), db: Session = 
     db.commit()
     msg = f"Added {c.name}." if answer == "yes" else f"Left {c.name} off."
     return _go(back, c.subcontract, msg)
+
+
+@router.post("/jobs/{number}/suppliers")
+def job_supplier_tracking(number: str, on: str = Form(""), back: str = Form(""), db: Session = Depends(get_db),
+                          user: User = Depends(editor)):
+    """The 'Track suppliers on this job' checkbox."""
+    from sqlalchemy import select
+
+    from app.db.models import Project
+
+    p = db.scalar(select(Project).where(Project.number == number))
+    if not p:
+        raise HTTPException(404)
+    dropped = service.set_tracking(db, p, on == "1", user.email)
+    db.commit()
+    if on == "1":
+        msg = f"Tracking suppliers on {p.number} again."
+    else:
+        msg = f"Suppliers are off for {p.number}." + (f" {dropped} unsent supplier-list email{'s' if dropped != 1 else ''} thrown away." if dropped else "")
+    return RedirectResponse(with_msg(safe_back(back, f"/jobs/{p.number}"), msg), status_code=303)

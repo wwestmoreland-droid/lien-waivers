@@ -1,4 +1,6 @@
-{# Suppliers (n) dropdown under one sub. Expects r (a job_waiver_rows row) and back. #}
+{# Suppliers (n) dropdown under one sub. Expects r (a job_waiver_rows row) and back.
+   Shows nothing when suppliers are switched off for the job. #}
+{% if r.sc.project.track_suppliers %}
 {% set sc = r.sc %}{% set sups = r.suppliers %}{% set ed = user.role in ('Admin', 'AP') %}
 <details class="sups">
   <summary class="small linkish">Suppliers ({{ sups|length }}){% if sc.supplier_list_status == 'none' %} · none over the minimum{% elif sc.supplier_list_status == 'requested' and not sups %} · list requested{% endif %}</summary>
@@ -43,3 +45,4 @@
     </div>{% endif %}
   </div>
 </details>
+{% endif %}

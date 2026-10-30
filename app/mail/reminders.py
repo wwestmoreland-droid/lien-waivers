@@ -77,7 +77,8 @@ def _supplier_list_reminders(db: Session, today: date, reminder_days: list[int])
 
     n = 0
     for sc in db.scalars(select(Subcontract).join(Project).where(
-            Project.is_tracked.is_(True), Subcontract.supplier_list_status == "requested")):
+            Project.is_tracked.is_(True), Project.track_suppliers.is_(True),
+            Subcontract.supplier_list_status == "requested")):
         root = db.scalar(select(EmailMessage).where(EmailMessage.token == f"SD-{sc.id}", EmailMessage.kind == "supplier_list",
                                                     EmailMessage.status == "sent").order_by(EmailMessage.id))
         if root is None or not root.sent_at:

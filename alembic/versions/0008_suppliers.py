@@ -69,6 +69,9 @@ def upgrade() -> None:
         batch_op.add_column(sa.Column('supplier_list_requested_at', sa.DateTime(timezone=True), nullable=True))
         batch_op.add_column(sa.Column('supplier_list_reminders', sa.Integer(), server_default='0', nullable=False))
 
+    with op.batch_alter_table('projects', schema=None) as batch_op:
+        batch_op.add_column(sa.Column('track_suppliers', sa.Boolean(), server_default=sa.true(), nullable=False))
+
     # A sub's waiver stays unique per (payable, type); a supplier's is unique per supplier too.
     # The old unnamed unique constraint is found by its columns.
     bind = op.get_bind()
@@ -106,6 +109,9 @@ def downgrade() -> None:
         batch_op.drop_column('supplier_list_reminders')
         batch_op.drop_column('supplier_list_requested_at')
         batch_op.drop_column('supplier_list_status')
+
+    with op.batch_alter_table('projects', schema=None) as batch_op:
+        batch_op.drop_column('track_suppliers')
 
     with op.batch_alter_table('supplier_candidates', schema=None) as batch_op:
         batch_op.drop_index(batch_op.f('ix_supplier_candidates_subcontract_id'))
