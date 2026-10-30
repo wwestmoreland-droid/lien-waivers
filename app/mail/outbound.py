@@ -406,6 +406,9 @@ def _after_send(db: Session, e: EmailMessage, actor: str) -> None:
         return
     if e.kind == "waiver_request" and w.status in (WaiverStatus.DRAFT, WaiverStatus.REJECTED):
         waivers.mark_sent(db, w, actor)
+        if not WaiverType(w.type).is_final and w.supplier_id is None:
+            from app.suppliers import service as suppliers
+            suppliers.maybe_request_list(db, w.subcontract)  # first partial out: now ask for the supplier list
     elif e.kind in ("reminder_1", "reminder_2"):
         w.reminder_count = max(w.reminder_count or 0, 1 if e.kind == "reminder_1" else 2)
         w.last_reminder_at = e.sent_at
@@ -443,3 +446,29 @@ def ensure_request_drafts(db: Session) -> int:
             queue_waiver_request(db, w, fresh=True)
             n += 1
     return n
+
+
+def delete_drafts(db: Session, ids: list[int], actor: str) -> dict:
+    """Throw away unsent emails. A waiver request also cancels its waiver (otherwise the next
+    sync drafts it again; Restore on the waiver brings it back). A supplier-list request marks
+    the sub as not asked, so it isn't requested again on its own."""
+    from app.db.models import Subcontract
+    from app.waivers import service as waivers
+
+    out = {"deleted": 0, "waivers_cancelled": 0}
+    for eid in ids:
+        e = db.get(EmailMessage, eid)
+        if e is None or e.direction != "out" or e.status not in ("draft", "queued", "failed"):
+            continue
+        if e.kind == "waiver_request" and e.waiver is not None and e.waiver.status in (
+                WaiverStatus.DRAFT, WaiverStatus.NEEDS_REVIEW):
+            waivers.void(db, e.waiver, actor, "Request deleted from Ready to send")
+            out["waivers_cancelled"] += 1
+        if e.kind == "supplier_list" and (e.token or "").startswith("SD-"):
+            sc = db.get(Subcontract, int(e.token.split("-", 1)[1]))
+            if sc is not None and sc.supplier_list_status == "requested":
+                sc.supplier_list_status, sc.supplier_list_requested_at = "skipped", None
+        e.status = "discarded"
+        log_email(db, e, actor, "discarded")
+        out["deleted"] += 1
+    return out

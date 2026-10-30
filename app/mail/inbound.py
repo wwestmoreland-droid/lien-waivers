@@ -131,6 +131,12 @@ def poll_all(db: Session) -> dict:
         log.exception("mail.tidy_failed")
         db.rollback()
     try:
+        stats["unfiled"] = recheck_received(db)
+        db.commit()
+    except Exception:
+        log.exception("mail.recheck_failed")
+        db.rollback()
+    try:
         stats["filed"] = file_waiting_replies(db)
         db.commit()
     except Exception:
@@ -165,6 +171,30 @@ def tidy_inbox(db: Session) -> int:
     return n
 
 
+def recheck_received(db: Session) -> int:
+    """Copies filed before replies like "forwarded to billing" were recognised: if what came in
+    is our own unsigned PDF, or the sub said it isn't signed, put the waiver back to waiting.
+    Each waiver is looked at once; accepted ones are never touched."""
+    from app.mail import unsigned
+    from app.waivers import service as waivers
+
+    n = 0
+    for w in db.scalars(select(Waiver).where(Waiver.status == WaiverStatus.RECEIVED.value,
+                                             Waiver.supplier_id.is_(None))).all():
+        v = dict(w.verification or {})
+        if v.get("unsigned_checked") or not v.get("email_id"):
+            continue
+        e = db.get(EmailMessage, v["email_id"])
+        reason = unsigned.reason_not_signed(db, w, e) if e is not None else None
+        if reason:
+            waivers.undo_received(db, w, "system:mail", reason)
+            unsigned.note_reply(db, w, e, reason)
+            n += 1
+        else:
+            w.verification = v | {"unsigned_checked": True}
+    return n
+
+
 def file_waiting_replies(db: Session, days: int = 45) -> int:
     """Safety net: a reply tied to a waiver that's still waiting, with a PDF or image, gets
     filed as the signed copy even if it wasn't when the mail first came in. A reply whose
@@ -188,6 +218,13 @@ def file_waiting_replies(db: Session, days: int = 45) -> int:
         if not e.attachments:
             _refetch_attachments(db, e)
         if not any(a.is_pdf or a.is_image for a in e.attachments):
+            continue
+        from app.mail import unsigned
+        if unsigned.was_held(db, e):
+            continue  # the sub said it isn't signed yet (or sent our own copy back)
+        reason = unsigned.reason_not_signed(db, w, e)
+        if reason:
+            unsigned.note_reply(db, w, e, reason)
             continue
         with db.begin_nested():
             if receive_waiver_copy(db, w, e, actor="system:mail"):
@@ -399,8 +436,15 @@ def process(db: Session, mb: Mailbox, msg: Incoming, provider=None) -> EmailMess
     if not readonly and (w or known) and provider is not None:
         outbound._label(db, mb, provider, msg.thread_id)
 
-    if w and not readonly and not e.is_auto_reply and e.attachments:
-        receive_waiver_copy(db, w, e, actor="system:mail")
+    if w and not readonly and not e.is_auto_reply:
+        from app.mail import unsigned
+        reason = unsigned.reason_not_signed(db, w, e)
+        if reason is None and not e.attachments and unsigned.NOT_SIGNED.search(unsigned.own_words(e)):
+            reason = "They replied without a signed copy."
+        if reason:
+            unsigned.note_reply(db, w, e, reason)  # "forwarded to billing" etc.: keep waiting, don't review
+        elif e.attachments:
+            receive_waiver_copy(db, w, e, actor="system:mail")
     outbound.log_email(db, e, "system:mail", "received", matched_by=method, found_in=e.found_in)
     return e
 

@@ -175,22 +175,42 @@ def request_list(db: Session, sc: Subcontract, actor: str = "system:suppliers") 
     return e
 
 
+def first_partial_sent(db: Session, sc: Subcontract) -> bool:
+    """Supplier lists are asked for only once the sub's first partial waiver has gone out."""
+    return db.scalar(select(Waiver.id).where(
+        Waiver.subcontract_id == sc.id, Waiver.supplier_id.is_(None), Waiver.sent_at.is_not(None),
+        Waiver.status != WaiverStatus.VOID.value,
+        Waiver.type.in_((WaiverType.CONDITIONAL_PARTIAL.value, WaiverType.UNCONDITIONAL_PARTIAL.value))).limit(1)) \
+        is not None
+
+
+def maybe_request_list(db: Session, sc: Subcontract) -> EmailMessage | None:
+    if sc.supplier_list_status is None and is_major_trade(db, sc) and not active(db, sc) \
+            and first_partial_sent(db, sc):
+        return request_list(db, sc)
+    return None
+
+
 def ensure_list_requests(db: Session) -> int:
-    """Once per major-trade sub: when the job is first tracked or the sub first crosses the minimum.
-    Unsent requests to subs that are now Labor or Material only are thrown away."""
+    """Ask each major-trade sub for its supplier list once, after its first partial waiver is
+    sent. Unsent requests to subs that are Labor/Material only, or haven't had a partial sent
+    yet, are thrown away (the latter are asked again after their first partial)."""
     for e in db.scalars(select(EmailMessage).where(EmailMessage.kind.in_(("supplier_list", "supplier_list_reminder")),
                                                    EmailMessage.status.in_(("draft", "queued", "failed")))).all():
         ref = (e.token or "").split("-", 1)[-1]
         sc = db.get(Subcontract, int(ref)) if ref.isdigit() else None
-        if sc is not None and excluded_reason(sc):
+        if sc is None:
+            continue
+        if excluded_reason(sc):
             e.status = "discarded"
+        elif e.kind == "supplier_list" and not first_partial_sent(db, sc) and e.created_by == "system:suppliers":
+            e.status = "discarded"
+            sc.supplier_list_status, sc.supplier_list_requested_at = None, None
     n = 0
     for sc in db.scalars(select(Subcontract).join(Project).where(
             Project.is_tracked.is_(True), Subcontract.track_suppliers.is_(True), Subcontract.deleted_in_source.is_(False),
             Subcontract.supplier_list_status.is_(None))).all():
-        if is_major_trade(db, sc) and not active(db, sc):
-            request_list(db, sc)
-            n += 1
+        n += maybe_request_list(db, sc) is not None
     return n
 
 

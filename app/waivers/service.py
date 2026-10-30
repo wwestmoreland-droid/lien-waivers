@@ -317,6 +317,17 @@ def mark_received(db: Session, w: Waiver, actor: str, filename: str, content: by
     log_event(db, w, actor, "received", WaiverStatus.RECEIVED.value, file=path.name)
 
 
+def undo_received(db: Session, w: Waiver, actor: str, note: str) -> None:
+    """It wasn't a signed copy after all: back to waiting on the sub. No email is drafted."""
+    if w.status != WaiverStatus.RECEIVED:
+        raise ValueError("Only a waiver that came back can be put back to waiting.")
+    log_event(db, w, actor, "not_signed", WaiverStatus.SENT.value, note=note, file=w.signed_pdf_path)
+    w.signed_pdf_path = None
+    w.received_at = None
+    w.verification = None
+    audit(db, actor, "waiver.not_signed", "waiver", w.id, note=note)
+
+
 def accept(db: Session, w: Waiver, actor: str, note: str = "") -> None:
     if w.status != WaiverStatus.RECEIVED:
         raise ValueError("Only a received waiver can be accepted.")

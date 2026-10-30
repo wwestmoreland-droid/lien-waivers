@@ -30,8 +30,31 @@ def sub(db, row_id) -> Subcontract:
     return db.scalar(select(Subcontract).where(Subcontract.source_row_id == row_id))
 
 
+def ask_lists(mail):
+    """Send each sub's first partial (past paid invoices), then sync: lists go to major trades."""
+    db = mail.db
+    for w in waivers.prepare_past(db, [r.payable.id for r in waivers.past_paid_invoices(db) if r.can_prepare], "ap"):
+        waivers.mark_sent(db, w, "ap")
+    db.commit()
+    run_sync(db, mail.source, trigger="test")
+    db.expire_all()
+
+
+def test_no_list_until_the_first_partial_is_sent(mail):
+    db = mail.db
+    assert db.scalar(select(EmailMessage).where(EmailMessage.kind == "supplier_list")) is None  # just tracked
+    delta = sub(db, 101)
+    assert not suppliers.first_partial_sent(db, delta)
+    w, e = send_request(mail)  # Delta's first partial goes out...
+    db.expire_all()
+    sd = db.scalar(select(EmailMessage).where(EmailMessage.token == f"SD-{delta.id}"))
+    assert sd is not None and sd.status == "draft"  # ...and its supplier-list request is drafted right away
+    assert db.scalar(select(EmailMessage).where(EmailMessage.token == f"SD-{sub(db, 102).id}")) is None
+
+
 def test_major_trades_are_asked_for_their_list_once(mail):
     db = mail.db
+    ask_lists(mail)
     asked = db.scalars(select(EmailMessage).where(EmailMessage.kind == "supplier_list")).all()
     names = {db.get(Subcontract, int(e.token.split("-")[1])).vendor.name for e in asked}
     assert "Delta Fire Systems, Inc" in names and "Ridge Plumbing" in names
@@ -72,6 +95,8 @@ def test_add_edit_remove_supplier(mail):
 
 
 def _reply_to_list(mail, sc, body, attachments=None):
+    if mail.db.scalar(select(EmailMessage).where(EmailMessage.token == f"SD-{sc.id}")) is None:
+        ask_lists(mail)
     e = db_e = mail.db.scalar(select(EmailMessage).where(EmailMessage.token == f"SD-{sc.id}"))
     outbound.send(mail.db, db_e, "ap")
     mail.db.commit()
@@ -214,6 +239,7 @@ def test_final_lists_missing_supplier_waivers(mail):
 
 def test_sub_checkbox_turns_suppliers_off_and_back_on(mail):
     db = mail.db
+    ask_lists(mail)
     delta, ridge = sub(db, 101), sub(db, 102)
     abc = suppliers.add(db, delta, "ap", "ABC Supply")
     db.add(SupplierCandidate(subcontract_id=delta.id, name="Pipe Co"))
@@ -304,6 +330,7 @@ def test_supplier_partial_is_checked_against_the_previous_pay_app(mail, monkeypa
 
 def test_labor_only_and_material_only_subs_get_no_supplier_requests(mail):
     db = mail.db
+    ask_lists(mail)
     delta, ridge = sub(db, 101), sub(db, 102)
     abc = suppliers.add(db, delta, "ap", "ABC Supply")
     db.commit()
