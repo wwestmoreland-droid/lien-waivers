@@ -34,6 +34,7 @@ TEMPLATES = {
     "received": ("08_received.txt", "Received (optional)"),
     "supplier_list": ("09_supplier_list.txt", "Supplier list request (major trades)"),
     "cancelled": ("10_cancelled.txt", "Waiver cancelled (please disregard)"),
+    "supplier_list_reminder": ("11_supplier_list_reminder.txt", "Supplier list reminder"),
 }
 
 BANNED_PHRASES = [

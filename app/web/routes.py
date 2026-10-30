@@ -38,6 +38,7 @@ from app.services.locks import JobAlreadyRunning
 from app.services.settings_store import get_setting, set_setting
 from app.services.sync_runner import sync_now
 from app.waivers import service as waiver_service
+from app.web.nav import safe_back, with_msg
 from app.web.templating import templates
 
 router = APIRouter()
@@ -74,34 +75,12 @@ def queue_counts(db: Session) -> dict[str, int]:
 
 # ---------------------------------------------------------------- dashboard
 
-@router.get("/", response_class=HTMLResponse)
-def dashboard(request: Request, db: Session = Depends(get_db), user: User = Depends(current_user)):
-    rows = report.report_rows(db)
-    totals = {f: sum((getattr(r, f) for r in rows), report.ZERO) for f in report.MONEY_FIELDS}
-    status_counts: dict[str, int] = {}
-    for r in rows:
-        status_counts[r.status] = status_counts.get(r.status, 0) + 1
-    tracked = db.scalars(select(Project).where(Project.is_tracked.is_(True)).order_by(Project.number)).all()
-    by_job = report.grouped(rows, "job")
-    new_projects = [p for p in project_svc.picker_projects(db) if not p.is_tracked and not p.ever_tracked]
-    waiver_counts = dict(db.execute(select(Waiver.status, func.count(Waiver.id)).join(Subcontract).join(Project)
-                                    .where(Project.is_tracked.is_(True)).group_by(Waiver.status)).all())
-    return render(request, "dashboard.html", user, waiver_counts=waiver_counts, totals=totals, status_counts=status_counts, tracked=tracked,
-                  by_job=by_job, counts=queue_counts(db), last_sync=_last_sync(db),
-                  next_sync=scheduler.next_run_time(), new_projects=new_projects,
-                  over_billed=[r for r in rows if r.status == "over_billed"])
-
-
 # ---------------------------------------------------------------- projects
 
-@router.get("/projects", response_class=HTMLResponse)
-def projects_page(request: Request, q: str = "", state: str = "", client: str = "", pm: str = "",
-                  db: Session = Depends(get_db), user: User = Depends(current_user)):
-    all_rows = project_svc.picker_projects(db)
-    rows = project_svc.picker_projects(db, q or None, state or None, client or None, pm or None)
-    return render(request, "projects.html", user, projects=rows, opts=project_svc.filter_options(all_rows),
-                  f={"q": q, "state": state, "client": client, "pm": pm}, label=project_svc.picker_label,
-                  last_sync=_last_sync(db))
+@router.get("/projects")
+def projects_page():
+    """The project picker is part of Jobs now."""
+    return RedirectResponse("/jobs?show=untracked", status_code=303)
 
 
 def _project(db: Session, number: str) -> Project:
@@ -118,6 +97,10 @@ def track_project(request: Request, number: str, db: Session = Depends(get_db),
     project_svc.set_tracked(db, p, True, user.email)
     db.commit()
     _start_background_sync("backfill", {p.number})
+    if request.query_params.get("view") == "jobs":
+        # The untracked row disappears and the job appears at the top of the tracked list.
+        return _job_row(request, db, user, p, oob=True,
+                        flash="Tracking. History is loading now (no emails are sent for past activity).")
     return render(request, "partials/project_row.html", user, p=p, label=project_svc.picker_label,
                   flash="Tracking. History is loading now (no emails are sent for past activity).")
 
@@ -126,12 +109,18 @@ def track_project(request: Request, number: str, db: Session = Depends(get_db),
 def untrack_project(request: Request, number: str, confirm: str = Form(""), db: Session = Depends(get_db),
                     user: User = Depends(require_role(*EDITORS))):
     p = _project(db, number)
+    jobs_view = request.query_params.get("view") == "jobs"
     open_items = project_svc.open_items_count(db, p)
     if open_items and confirm != "yes":
+        if jobs_view:
+            return _job_row(request, db, user, p, confirm_untrack=open_items)
         return render(request, "partials/project_row.html", user, p=p, label=project_svc.picker_label,
                       confirm_untrack=open_items)
     project_svc.set_tracked(db, p, False, user.email)
     db.commit()
+    if jobs_view:
+        return HTMLResponse(f'<div class="flash">Untracked {p.number}. Automation is paused; history is kept. '
+                            'It\'s listed under the other active projects below.</div>')
     return render(request, "partials/project_row.html", user, p=p, label=project_svc.picker_label,
                   flash="Untracked. Automation is paused; history is kept.")
 
@@ -139,11 +128,58 @@ def untrack_project(request: Request, number: str, confirm: str = Form(""), db: 
 # ---------------------------------------------------------------- jobs / CTC
 
 @router.get("/jobs", response_class=HTMLResponse)
-def jobs_page(request: Request, by: str = "job", db: Session = Depends(get_db), user: User = Depends(current_user)):
+def jobs_page(request: Request, q: str = "", show: str = "", by: str = "", msg: str = "",
+              db: Session = Depends(get_db), user: User = Depends(current_user)):
+    if by:  # old links to the CTC report views
+        return RedirectResponse(f"/reports/ctc?by={by}", status_code=303)
+    rows = report.report_rows(db)
+    groups = {g["key"]: g for g in report.grouped(rows, "job")}
+    tracked = db.scalars(select(Project).where(Project.is_tracked.is_(True)).order_by(Project.number)).all()
+    others = [p for p in project_svc.picker_projects(db) if not p.is_tracked]
+    if q:
+        ql = q.lower()
+
+        def hit(p: Project) -> bool:
+            return any(ql in (v or "").lower() for v in (p.number, p.name, p.client_company, p.pm_name))
+        tracked = [p for p in tracked if hit(p)]
+        others = [p for p in others if hit(p)]
+    open_waivers = dict(db.execute(select(Project.number, func.count(Waiver.id)).join(Subcontract, Subcontract.project_id == Project.id)
+                                   .join(Waiver, Waiver.subcontract_id == Subcontract.id)
+                                   .where(Project.is_tracked.is_(True), Waiver.status.in_(("draft", "sent", "received")))
+                                   .group_by(Project.number)).all())
+    blocked = dict(db.execute(select(Project.number, func.count(Waiver.id)).join(Subcontract, Subcontract.project_id == Project.id)
+                              .join(Waiver, Waiver.subcontract_id == Subcontract.id)
+                              .where(Project.is_tracked.is_(True), Waiver.status == "needs_review")
+                              .group_by(Project.number)).all())
+    subs = {p.number: waiver_service.job_waiver_rows(db, p) for p in tracked}
+    codes = sorted(int(c) for c in get_setting(db, "picker_statuses"))
+    statuses_label = ", ".join(STATUS_NAMES.get(c, str(c)) for c in codes)
+    return render(request, "jobs.html", user, tracked=tracked, others=others, groups=groups, q=q,
+                  jobs_view=True, statuses_label=statuses_label,
+                  show_untracked=show == "untracked" or bool(q and others), open_waivers=open_waivers,
+                  blocked=blocked, subs=subs, label=project_svc.picker_label, msg=msg)
+
+
+STATUS_NAMES = {7: "7 Pre Construction", 8: "8 Construction", 9: "9 Post Construction"}
+
+
+def _job_row(request: Request, db: Session, user: User, p: Project, **extra) -> HTMLResponse:
+    """One tracked job on the Jobs page (also returned after Track / Untrack there)."""
+    groups = {g["key"]: g for g in report.grouped(report.report_rows(db, p.number), "job")}
+    open_n = db.scalar(select(func.count(Waiver.id)).join(Subcontract).where(
+        Subcontract.project_id == p.id, Waiver.status.in_(("draft", "sent", "received"))))
+    blocked_n = db.scalar(select(func.count(Waiver.id)).join(Subcontract).where(
+        Subcontract.project_id == p.id, Waiver.status == "needs_review"))
+    return render(request, "partials/job_row.html", user, p=p, g=groups.get(p.number), open_n=open_n,
+                  blocked_n=blocked_n, subs=waiver_service.job_waiver_rows(db, p), **extra)
+
+
+@router.get("/reports/ctc", response_class=HTMLResponse)
+def ctc_report(request: Request, by: str = "job", db: Session = Depends(get_db), user: User = Depends(current_user)):
     if by not in ("job", "sub", "pm"):
         by = "job"
     rows = report.report_rows(db)
-    return render(request, "jobs.html", user, groups=report.grouped(rows, by), by=by, rows=rows)
+    return render(request, "ctc_report.html", user, groups=report.grouped(rows, by), by=by, rows=rows)
 
 
 @router.get("/jobs/{number}", response_class=HTMLResponse)
@@ -162,13 +198,13 @@ def job_detail(request: Request, number: str, db: Session = Depends(get_db), use
 
 
 @router.get("/jobs/{number}/signed-waivers.pdf")
-def job_signed_waivers(number: str, db: Session = Depends(get_db), user: User = Depends(current_user)):
+def job_signed_waivers(number: str, suppliers: str = "", db: Session = Depends(get_db),
+                       user: User = Depends(current_user)):
+    """Cover page (who's included, who's missing), then the waiver that counts for each sub."""
     p = _project(db, number)
-    waivers = [r["waiver"] for r in waiver_service.job_waiver_rows(db, p) if r["waiver"]]
-    if not waivers:
-        raise HTTPException(404, "No signed waivers on this job yet.")
-    data = waiver_service.combined_signed_pdf(db, waivers)
-    name = f"Signed lien waivers {p.number}.pdf"
+    data = waiver_service.job_waiver_packet(db, p, include_suppliers=suppliers == "1")
+    from app.services.today import local_today
+    name = f"Lien waivers {p.number} {local_today().isoformat()}.pdf"
     return Response(data, media_type="application/pdf",
                     headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
@@ -212,7 +248,7 @@ def sub_detail(request: Request, sc_id: int, found: str = "", msg: str = "", db:
 
 
 @router.post("/payables/{pid}/retention")
-def toggle_retention(pid: int, value: str = Form(...), db: Session = Depends(get_db),
+def toggle_retention(pid: int, value: str = Form(...), back: str = Form(""), db: Session = Depends(get_db),
                      user: User = Depends(require_role(*EDITORS))):
     p = db.get(Payable, pid)
     if not p:
@@ -223,7 +259,8 @@ def toggle_retention(pid: int, value: str = Form(...), db: Session = Depends(get
     if old != p.is_retention_invoice:
         waiver_service.reprocess_payable(db, p, user.email)
     db.commit()
-    return RedirectResponse(f"/subs/{p.subcontract_id}" if p.subcontract_id else "/queues", status_code=303)
+    default = f"/subs/{p.subcontract_id}" if p.subcontract_id else "/queues"
+    return RedirectResponse(with_msg(safe_back(back, default), "Saved." if back else ""), status_code=303)
 
 
 @router.get("/reports/ctc.csv")
@@ -290,7 +327,7 @@ def _reresolve_all(db: Session) -> None:
 
 
 @router.post("/queues/payables/{pid}/map-vendor")
-def map_vendor(pid: int, vendor_id: int = Form(...), db: Session = Depends(get_db),
+def map_vendor(pid: int, vendor_id: int = Form(...), back: str = Form(""), db: Session = Depends(get_db),
                user: User = Depends(require_role(*EDITORS))):
     p = db.get(Payable, pid)
     vendor = db.get(Vendor, vendor_id)
@@ -300,11 +337,13 @@ def map_vendor(pid: int, vendor_id: int = Form(...), db: Session = Depends(get_d
     audit(db, user.email, "vendor.alias_added", "vendor", vendor.id, alias=p.vendor_parsed, from_payable=p.source_row_id)
     _reresolve_all(db)
     db.commit()
-    return RedirectResponse("/queues#ap", status_code=303)
+    return RedirectResponse(with_msg(safe_back(back, "/queues#ap"),
+                                     "Saved. The vendor name is remembered for next time." if back else ""),
+                            status_code=303)
 
 
 @router.post("/queues/payables/{pid}/choose-subcontract")
-def choose_subcontract(pid: int, subcontract_id: int = Form(...), db: Session = Depends(get_db),
+def choose_subcontract(pid: int, subcontract_id: int = Form(...), back: str = Form(""), db: Session = Depends(get_db),
                        user: User = Depends(require_role(*EDITORS))):
     p = db.get(Payable, pid)
     sc = db.get(Subcontract, subcontract_id)
@@ -316,11 +355,11 @@ def choose_subcontract(pid: int, subcontract_id: int = Form(...), db: Session = 
         resolver.add_alias(db, sc.vendor, p.vendor_parsed, actor=user.email)
     audit(db, user.email, "payable.subcontract_assigned", "payable", p.source_row_id, subcontract_id=sc.id)
     db.commit()
-    return RedirectResponse("/queues#ap", status_code=303)
+    return RedirectResponse(with_msg(safe_back(back, "/queues#ap"), "Assigned." if back else ""), status_code=303)
 
 
 @router.post("/queues/payables/{pid}/direct-purchase")
-def direct_purchase(pid: int, scope: str = Form("job"), note: str = Form(""), db: Session = Depends(get_db),
+def direct_purchase(pid: int, scope: str = Form("job"), note: str = Form(""), back: str = Form(""), db: Session = Depends(get_db),
                     user: User = Depends(require_role(*EDITORS))):
     p = db.get(Payable, pid)
     if not p:
@@ -337,11 +376,12 @@ def direct_purchase(pid: int, scope: str = Form("job"), note: str = Form(""), db
     db.flush()
     _reresolve_all(db)
     db.commit()
-    return RedirectResponse("/queues#ap", status_code=303)
+    return RedirectResponse(with_msg(safe_back(back, "/queues#ap"),
+                                     "Marked as a direct purchase. No waiver needed." if back else ""), status_code=303)
 
 
 @router.post("/queues/change-orders/{cid}/map-vendor")
-def map_co_vendor(cid: int, vendor_id: int = Form(...), db: Session = Depends(get_db),
+def map_co_vendor(cid: int, vendor_id: int = Form(...), back: str = Form(""), db: Session = Depends(get_db),
                   user: User = Depends(require_role(*EDITORS))):
     co = db.get(ChangeOrder, cid)
     vendor = db.get(Vendor, vendor_id)
@@ -351,11 +391,11 @@ def map_co_vendor(cid: int, vendor_id: int = Form(...), db: Session = Depends(ge
     audit(db, user.email, "vendor.alias_added", "vendor", vendor.id, alias=co.vendor_parsed, from_co=co.source_row_id)
     _reresolve_all(db)
     db.commit()
-    return RedirectResponse("/queues#co", status_code=303)
+    return RedirectResponse(with_msg(safe_back(back, "/queues#co"), "Assigned." if back else ""), status_code=303)
 
 
 @router.post("/queues/review/{rid}/{action}")
-def review_action(rid: int, action: str, note: str = Form(""), db: Session = Depends(get_db),
+def review_action(rid: int, action: str, note: str = Form(""), back: str = Form(""), db: Session = Depends(get_db),
                   user: User = Depends(require_role(*EDITORS))):
     item = db.get(ReviewItem, rid)
     if not item or action not in ("resolve", "dismiss"):
@@ -366,7 +406,7 @@ def review_action(rid: int, action: str, note: str = Form(""), db: Session = Dep
     item.note = note or None
     audit(db, user.email, f"review.{action}", "review_item", item.id, kind=item.kind, note=note)
     db.commit()
-    return RedirectResponse("/queues#review", status_code=303)
+    return RedirectResponse(with_msg(safe_back(back, "/queues#review"), "Done." if back else ""), status_code=303)
 
 
 # ---------------------------------------------------------------- sync
@@ -426,6 +466,8 @@ def settings_page(request: Request, db: Session = Depends(get_db), user: User = 
         interval=get_setting(db, "sync_interval_minutes"),
         threshold=get_setting(db, "major_trade_threshold"),
         reviewer=get_setting(db, "default_reviewer_email"),
+        statuses=get_setting(db, "picker_statuses"),
+        supplier_min=get_setting(db, "supplier_min"),
         contact_fill=get_setting(db, "smartsheet_contact_fill"),
         fills=db.scalars(select(AuditLog).where(AuditLog.action.in_(
             ("smartsheet.cells_filled", "smartsheet.billing_replaced"))).order_by(AuditLog.id.desc()).limit(25)).all(),
@@ -438,17 +480,23 @@ def settings_page(request: Request, db: Session = Depends(get_db), user: User = 
 
 
 @router.post("/settings/general")
-def save_general(interval: int = Form(...), threshold: float = Form(...), reviewer: str = Form(...),
-                 db: Session = Depends(get_db), user: User = Depends(require_role("Admin"))):
+def save_general(interval: int = Form(...), reviewer: str = Form(...), threshold: float | None = Form(None),
+                 statuses: str = Form(""), supplier_min: float | None = Form(None), db: Session = Depends(get_db),
+                 user: User = Depends(require_role("Admin"))):
     if interval < 5:
         raise HTTPException(400, "Sync interval must be at least 5 minutes.")
     if interval != get_setting(db, "sync_interval_minutes"):
         set_setting(db, "sync_interval_minutes", interval, user.email)
         scheduler.reschedule(interval)
-    if threshold != get_setting(db, "major_trade_threshold"):
+    if threshold is not None and threshold != get_setting(db, "major_trade_threshold"):
         set_setting(db, "major_trade_threshold", threshold, user.email)
     if reviewer.strip().lower() != get_setting(db, "default_reviewer_email"):
         set_setting(db, "default_reviewer_email", reviewer.strip().lower(), user.email)
+    if supplier_min is not None and supplier_min != get_setting(db, "supplier_min"):
+        set_setting(db, "supplier_min", supplier_min, user.email)
+    codes = sorted({int(x) for x in statuses.replace(";", ",").split(",") if x.strip().isdigit()})
+    if codes and codes != sorted(get_setting(db, "picker_statuses")):
+        set_setting(db, "picker_statuses", codes, user.email)
     db.commit()
     return RedirectResponse("/settings", status_code=303)
 

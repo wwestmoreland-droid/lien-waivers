@@ -20,7 +20,9 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    Index,
     UniqueConstraint,
+    text,
     true,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -179,6 +181,12 @@ class Subcontract(Base):
     insurance_exp: Mapped[date | None] = mapped_column(Date)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     deleted_in_source: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Supplier list (major trades): requested / received / none (sub said no suppliers over the minimum).
+    supplier_list_status: Mapped[str | None] = mapped_column(String(20))
+    supplier_list_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    supplier_list_reminders: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # Unticked for a sub: no supplier list, supplier waivers or supplier lines in its emails.
+    track_suppliers: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
 
     vendor: Mapped[Vendor] = relationship()
     project: Mapped[Project] = relationship(back_populates="subcontracts")
@@ -376,14 +384,22 @@ class JobLock(Base):
 
 
 class Waiver(Base):
-    """One waiver owed for one payable. Unique on (payable_id, type) so re-processing an event
-    never creates a second one. Every status change is appended to waiver_events."""
+    """One waiver owed for one payable. A sub's own waiver is unique on (payable_id, type), so
+    re-processing an event never creates a second one. A supplier's waiver (supplier_id set)
+    came in with the sub's waiver for that payable and is unique per supplier. Every status
+    change is appended to waiver_events."""
 
     __tablename__ = "waivers"
-    __table_args__ = (UniqueConstraint("payable_id", "type"),)
+    __table_args__ = (
+        Index("uq_waivers_sub", "payable_id", "type", unique=True,
+              sqlite_where=text("supplier_id IS NULL"), postgresql_where=text("supplier_id IS NULL")),
+        Index("uq_waivers_supplier", "payable_id", "type", "supplier_id", unique=True,
+              sqlite_where=text("supplier_id IS NOT NULL"), postgresql_where=text("supplier_id IS NOT NULL")),
+    )
     id: Mapped[int] = mapped_column(primary_key=True)
     payable_id: Mapped[int] = mapped_column(ForeignKey("payables.id"))
     subcontract_id: Mapped[int] = mapped_column(ForeignKey("subcontracts.id"))
+    supplier_id: Mapped[int | None] = mapped_column(ForeignKey("suppliers.id"))
     type: Mapped[str] = mapped_column(String(30))  # WaiverType
     state: Mapped[str | None] = mapped_column(String(2))
     template_key: Mapped[str | None] = mapped_column(String(100))
@@ -412,6 +428,7 @@ class Waiver(Base):
 
     payable: Mapped[Payable] = relationship()
     subcontract: Mapped[Subcontract] = relationship()
+    supplier: Mapped[Supplier | None] = relationship()
     events: Mapped[list[WaiverEvent]] = relationship(back_populates="waiver", order_by="WaiverEvent.id")
 
     @property
@@ -648,3 +665,48 @@ class StoredFile(Base):
     content: Mapped[bytes] = mapped_column(LargeBinary)
     size: Mapped[int] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class Supplier(Base):
+    """A supplier (or sub-tier) a sub uses on one job. Their signed waivers come in through the
+    sub and are Waivers with supplier_id set. Removed suppliers are kept, marked removed."""
+
+    __tablename__ = "suppliers"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    subcontract_id: Mapped[int] = mapped_column(ForeignKey("subcontracts.id"), index=True)
+    vendor_id: Mapped[int | None] = mapped_column(ForeignKey("vendors.id"))
+    name: Mapped[str] = mapped_column(String(255))
+    supplies: Mapped[str | None] = mapped_column(String(500))
+    approx_amount: Mapped[Decimal | None] = mapped_column(Money)
+    contact_name: Mapped[str | None] = mapped_column(String(255))
+    email: Mapped[str | None] = mapped_column(String(255))
+    phone: Mapped[str | None] = mapped_column(String(100))
+    source: Mapped[str] = mapped_column(String(20), default="manual")  # list / manual / email
+    status: Mapped[str] = mapped_column(String(20), default="active")  # active / removed
+    created_by: Mapped[str | None] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    subcontract: Mapped[Subcontract] = relationship()
+    vendor: Mapped[Vendor | None] = relationship()
+
+
+class SupplierCandidate(Base):
+    """A supplier read from a sub's emailed list, waiting for a person to say yes or no."""
+
+    __tablename__ = "supplier_candidates"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    subcontract_id: Mapped[int] = mapped_column(ForeignKey("subcontracts.id"), index=True)
+    email_id: Mapped[int | None] = mapped_column(ForeignKey("emails.id"))
+    name: Mapped[str] = mapped_column(String(255))
+    supplies: Mapped[str | None] = mapped_column(String(500))
+    approx_amount: Mapped[Decimal | None] = mapped_column(Money)
+    contact_name: Mapped[str | None] = mapped_column(String(255))
+    email: Mapped[str | None] = mapped_column(String(255))
+    phone: Mapped[str | None] = mapped_column(String(100))
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending / added / rejected
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    decided_by: Mapped[str | None] = mapped_column(String(255))
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    subcontract: Mapped[Subcontract] = relationship()

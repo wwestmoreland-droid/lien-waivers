@@ -1,0 +1,57 @@
+{# Suppliers (n) dropdown under one sub, with its "Track suppliers" checkbox. Expects r (a
+   job_waiver_rows row) and back. With the box unticked only the checkbox shows. #}
+{% set sc = r.sc %}
+<div class="sup-line">
+{% if user.role in ('Admin', 'AP') %}
+<form method="post" action="/subs/{{ sc.id }}/track-suppliers" class="sup-switch">
+  <input type="hidden" name="back" value="{{ back }}">
+  <label class="small"><input type="checkbox" name="on" value="1" {{ 'checked' if sc.track_suppliers }} onchange="this.form.submit()"> Track suppliers</label>
+  <noscript><button class="btn sm">Save</button></noscript>
+</form>
+{% elif not sc.track_suppliers %}<span class="small muted">Suppliers not tracked</span>{% endif %}
+{% if sc.track_suppliers %}{% set sups = r.suppliers %}{% set ed = user.role in ('Admin', 'AP') %}
+<details class="sups">
+  <summary class="small linkish">Suppliers ({{ sups|length }}){% if sc.supplier_list_status == 'none' %} · none over the minimum{% elif sc.supplier_list_status == 'requested' and not sups %} · list requested{% endif %}</summary>
+  <div class="sups-body">
+    {% for s in sups %}{% set sp = s.supplier %}
+    <div class="sup">
+      <div><strong>{{ sp.name }}</strong>{% if sp.supplies %} <span class="small muted">· {{ sp.supplies }}</span>{% endif %}{% if sp.approx_amount %} <span class="small muted">· ~{{ sp.approx_amount|money }}</span>{% endif %}
+        <div class="small">{{ s.words }}{% if s.waiver %} · <a href="/waivers/{{ s.waiver.id }}/signed" target="_blank">view</a>{% endif %}</div></div>
+      {% if ed %}<div class="row-actions">
+        <details class="pick"><summary class="small linkish">Edit</summary>
+          <form method="post" action="/suppliers/{{ sp.id }}" class="sup-form"><input type="hidden" name="back" value="{{ back }}">
+            <input name="name" value="{{ sp.name }}" placeholder="Company" required>
+            <input name="supplies" value="{{ sp.supplies or '' }}" placeholder="What they supply">
+            <input name="amount" value="{{ sp.approx_amount or '' }}" placeholder="Rough amount">
+            <input name="contact_name" value="{{ sp.contact_name or '' }}" placeholder="Contact name">
+            <input name="email" value="{{ sp.email or '' }}" placeholder="Email">
+            <input name="phone" value="{{ sp.phone or '' }}" placeholder="Phone">
+            <button class="btn sm primary">Save</button></form></details>
+        <form method="post" action="/suppliers/{{ sp.id }}/remove" onsubmit="return confirm('Remove {{ sp.name }} from {{ sc.vendor.name }}\'s suppliers?')">
+          <input type="hidden" name="back" value="{{ back }}"><button class="btn sm danger">Remove</button></form>
+      </div>{% endif %}
+    </div>
+    {% else %}
+    <div class="small muted">{% if sc.supplier_list_status == 'none' %}{{ sc.vendor.name }} said they have no suppliers over the minimum.
+      {% elif sc.supplier_list_status == 'requested' %}Supplier list requested{% if sc.supplier_list_requested_at %} {{ sc.supplier_list_requested_at|fdate }}{% endif %}; waiting on {{ sc.vendor.name }}.
+      {% else %}No supplier list yet.{% endif %}</div>
+    {% endfor %}
+    {% if ed %}<div class="row-actions" style="margin-top:6px">
+      <details class="pick"><summary class="btn sm">Add supplier</summary>
+        <form method="post" action="/subs/{{ sc.id }}/suppliers" class="sup-form"><input type="hidden" name="back" value="{{ back }}">
+          <input name="name" placeholder="Company" required>
+          <input name="supplies" placeholder="What they supply">
+          <input name="amount" placeholder="Rough amount">
+          <input name="contact_name" placeholder="Contact name">
+          <input name="email" placeholder="Email">
+          <input name="phone" placeholder="Phone">
+          <button class="btn sm primary">Add</button></form></details>
+      {% if not sups and sc.supplier_list_status != 'requested' %}
+      <form method="post" action="/subs/{{ sc.id }}/supplier-list/request"><input type="hidden" name="back" value="{{ back }}"><button class="btn sm">Request list</button></form>{% endif %}
+      {% if not sups and sc.supplier_list_status != 'none' %}
+      <form method="post" action="/subs/{{ sc.id }}/supplier-list/none"><input type="hidden" name="back" value="{{ back }}"><button class="btn sm">No suppliers</button></form>{% endif %}
+    </div>{% endif %}
+  </div>
+</details>
+{% endif %}
+</div>

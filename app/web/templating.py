@@ -69,6 +69,20 @@ def _outbox_count() -> int:
         db.close()
 
 
+def _today_count(user) -> int:
+    """The number on the Today tab: things waiting for this person."""
+    from app.db.session import SessionLocal
+    from app.services.today import action_count
+
+    db = SessionLocal()
+    try:
+        return action_count(db, user)
+    except Exception:
+        return 0
+    finally:
+        db.close()
+
+
 def _kind_labels():
     from app.mail.outbound import KIND_LABELS
     return KIND_LABELS
@@ -76,5 +90,5 @@ def _kind_labels():
 
 from app.waivers.types import WaiverType  # noqa: E402
 
-templates.env.globals.update(mail_banner=_mail_banner, outbox_count=_outbox_count, KIND_LABELS=_kind_labels(),
+templates.env.globals.update(mail_banner=_mail_banner, outbox_count=_outbox_count, today_count=_today_count, KIND_LABELS=_kind_labels(),
                              WaiverType=WaiverType)

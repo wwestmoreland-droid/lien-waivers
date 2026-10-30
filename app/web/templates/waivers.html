@@ -37,7 +37,7 @@
   <tr>
     <td>{% if editor and w.status != 'void' %}<input type="checkbox" name="waiver_id" value="{{ w.id }}">{% endif %}</td>
     <td><a href="/waivers/{{ w.id }}">{{ w.id }}</a></td>
-    <td><a href="/subs/{{ w.subcontract_id }}">{{ w.subcontract.vendor.name }}</a></td>
+    <td><a href="/subs/{{ w.subcontract_id }}">{{ w.subcontract.vendor.name }}</a>{% if w.supplier_id %}<div class="small muted">supplier: {{ w.supplier.name }}</div>{% endif %}</td>
     <td style="white-space:nowrap">{{ w.subcontract.project.number }}</td>
     <td>{{ WaiverType(w.type).label }}</td>
     <td>{{ w.payable.invoice_no or '' }}</td>

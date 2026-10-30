@@ -18,6 +18,7 @@ from app.services.settings_store import get_setting, set_setting
 from app.waivers import pdf, service
 from app.waivers.types import WaiverStatus, WaiverType
 from app.web.security import safe_file_response
+from app.web.nav import safe_back, with_msg
 from app.web.templating import templates
 
 router = APIRouter()
@@ -145,13 +146,18 @@ def waiver_signed(wid: int, db: Session = Depends(get_db), user: User = Depends(
     return safe_file_response(str(local), local.name, None)
 
 
-def _act(db: Session, w: Waiver, fn, *args):
+def _act(db: Session, w: Waiver, fn, *args, back: str = "", done: str = ""):
+    """Run a waiver action. `back` (from Today) returns there with a short message."""
     try:
         fn(db, w, *args)
     except ValueError as exc:
         db.rollback()
+        if back:
+            return RedirectResponse(with_msg(safe_back(back, f"/waivers/{w.id}"), str(exc)), status_code=303)
         return _back(w, str(exc))
     db.commit()
+    if back:
+        return RedirectResponse(with_msg(safe_back(back, f"/waivers/{w.id}"), done), status_code=303)
     return _back(w)
 
 
@@ -178,31 +184,36 @@ def mark_sent(wid: int, db: Session = Depends(get_db), user: User = Depends(requ
 
 
 @router.post("/waivers/{wid}/received")
-async def received(wid: int, file: UploadFile = File(...), db: Session = Depends(get_db),
+async def received(wid: int, file: UploadFile = File(...), back: str = Form(""), db: Session = Depends(get_db),
                    user: User = Depends(require_role(*EDITORS))):
     w = _waiver(db, wid)
     content = await file.read()
     if not content:
         return _back(w, "The file was empty.")
-    return _act(db, w, service.mark_received, user.email, file.filename or "signed.pdf", content)
+    return _act(db, w, service.mark_received, user.email, file.filename or "signed.pdf", content, back=back,
+                done=f"Got it. {w.subcontract.vendor.name}'s signed copy is under Signed copies back.")
 
 
 @router.post("/waivers/{wid}/accept")
-def accept(wid: int, note: str = Form(""), db: Session = Depends(get_db),
+def accept(wid: int, note: str = Form(""), back: str = Form(""), db: Session = Depends(get_db),
            user: User = Depends(require_role("Admin", "AP", "PM"))):
     w = _waiver(db, wid)
     if user.role == "PM" and (w.subcontract.project.pm_email or "").lower() != user.email:
         raise HTTPException(403, "PMs can accept waivers on their own jobs only.")
-    return _act(db, w, service.accept_and_ack, user.email, note)
+    return _act(db, w, service.accept_and_ack, user.email, note, back=back,
+                done=f"Accepted {w.subcontract.vendor.name}'s waiver.")
 
 
 @router.post("/waivers/{wid}/reject")
-def reject(wid: int, reason: str = Form(...), custom_reason: str = Form(""), db: Session = Depends(get_db),
+def reject(wid: int, reason: str = Form(...), custom_reason: str = Form(""), back: str = Form(""),
+           db: Session = Depends(get_db),
            user: User = Depends(require_role("Admin", "AP", "PM"))):
     w = _waiver(db, wid)
     if user.role == "PM" and (w.subcontract.project.pm_email or "").lower() != user.email:
         raise HTTPException(403, "PMs can reject waivers on their own jobs only.")
-    return _act(db, w, service.reject_and_reply, user.email, custom_reason.strip() or reason)
+    return _act(db, w, service.reject_and_reply, user.email, custom_reason.strip() or reason, back=back,
+                done=f"Sent back. When it came by email, the \"please correct\" reply to {w.subcontract.vendor.name} "
+                     "is under Ready to send.")
 
 
 @router.post("/waivers/{wid}/void")

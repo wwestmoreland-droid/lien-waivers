@@ -8,7 +8,13 @@
     {{ p.address or '' }}</p>
   </div>
   <div class="row-actions">
-    {% if waiver_rows|selectattr('waiver')|list %}<a class="btn primary" href="/jobs/{{ p.number }}/signed-waivers.pdf">Download all signed waivers (PDF)</a>{% endif %}
+    <details class="dl">
+      <summary class="btn primary">Download waivers</summary>
+      <form class="dl-form" method="get" action="/jobs/{{ p.number }}/signed-waivers.pdf">
+        <label><input type="checkbox" name="suppliers" value="1"> Include suppliers' waivers</label>
+        <button class="btn primary">Download PDF</button>
+      </form>
+    </details>
     <a class="btn" href="/reports/ctc.csv?project={{ p.number }}">CSV</a><a class="btn" href="/reports/ctc.xlsx?project={{ p.number }}">XLSX</a></div>
 </div>
 {% if not p.is_tracked %}<div class="warnbox">This project is not tracked. Data shown is from when it was.</div>{% endif %}
@@ -16,7 +22,7 @@
 {% with show_project=false %}{% include "partials/ctc_rows.html" %}{% endwith %}
 
 <h2 id="waivers">Signed waivers by sub</h2>
-<p class="small muted">For each sub: their latest invoice, and the signed waiver that counts: the unconditional final if there is one, otherwise the conditional final, otherwise the most recent partial. "Download all" puts these in one PDF, each starting on its own page.</p>
+<p class="small muted">For each sub: their latest invoice, and the signed waiver that counts: the unconditional final if there is one, otherwise the conditional final, otherwise the most recent partial. "Download waivers" puts these in one PDF after a cover page listing who's missing.</p>
 <div class="table-wrap"><table>
   <tr><th>Sub</th><th>Latest invoice</th><th>Signed waiver on file</th><th></th></tr>
   {% for r in waiver_rows %}
@@ -31,6 +37,7 @@
       {% else %}<span class="muted small">none signed yet</span>{% endif %}</td>
     <td>{% if w %}<a class="small" href="/waivers/{{ w.id }}">details</a>{% endif %}</td>
   </tr>
+  <tr class="sub-sups"><td colspan="4">{% with back='/jobs/' ~ p.number ~ '#waivers' %}{% include "partials/suppliers.html" %}{% endwith %}</td></tr>
   {% else %}
   <tr><td colspan="4" class="muted">No subcontracts on this job.</td></tr>
   {% endfor %}

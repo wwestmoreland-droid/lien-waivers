@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}More{% endblock %}
+{% block content %}
+<h1>More</h1>
+<p class="sub">Everything else. Day to day, Today and Jobs are all you need.</p>
+<div class="links">
+  <a class="linkrow" href="/waivers"><strong>All waivers</strong><span>Every waiver by status, with filters, cancelling, and the PDFs.</span></a>
+  <a class="linkrow" href="/waivers-past"><strong>Past waivers</strong><span>Prepare waivers for invoices that were paid before a job was tracked.</span></a>
+  <a class="linkrow" href="/email"><strong>Email center</strong><span>Waiver mail in and out, the Outbox, and sent mail.</span></a>
+  {% if user.role in ('Admin', 'AP') %}<a class="linkrow" href="/contacts"><strong>Contacts</strong><span>Vendor contacts from All Subcontracts and email.</span></a>{% endif %}
+  <a class="linkrow" href="/reports/ctc"><strong>Full CTC report</strong><span>Cost to complete by job, by sub or by PM, with CSV and Excel export.</span></a>
+  <a class="linkrow" href="/queues"><strong>Queues</strong><span>The full list behind Quick questions, for unusual cases.</span></a>
+  <a class="linkrow" href="/sync-runs"><strong>Sync log</strong><span>Each Smartsheet sync and what it found.</span></a>
+  <a class="linkrow" href="/digest"><strong>Daily digest</strong><span>The AP summary of the day.</span></a>
+  <a class="linkrow" href="/settings"><strong>Settings</strong><span>Mailboxes, email wording, reminders, thresholds, users.</span></a>
+</div>
+{% endblock %}

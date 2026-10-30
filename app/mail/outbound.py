@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import mimetypes
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 
 import structlog
@@ -30,12 +31,15 @@ KIND_LABELS = {
     "escalation": "Escalation to PM",
     "correction": "Needs correction",
     "received": "Received",
+    "supplier_list": "Supplier list request",
+    "supplier_list_reminder": "Supplier list reminder",
     "cancelled": "Waiver cancelled",
     "free": "Email",
     "inbound": "Received email",
 }
 
-AUTO_SEND_KINDS = ("waiver_request", "reminder_1", "reminder_2", "escalation", "correction", "received")
+AUTO_SEND_KINDS = ("waiver_request", "reminder_1", "reminder_2", "escalation", "correction", "received",
+                   "supplier_list", "supplier_list_reminder")
 
 REQUEST_TEMPLATE = {
     WaiverType.UNCONDITIONAL_PARTIAL: "partial",
@@ -103,7 +107,8 @@ def merge_values(db: Session, w: Waiver, mb: Mailbox | None) -> dict:
         "exceptions": w.exceptions_text,
         "signature": signature,
         "vendor": sc.vendor.name,
-        "waiver_type": WaiverType(w.type).label.lower() + " lien waiver",
+        "waiver_type": (f"lien waiver from {w.supplier.name}" if w.supplier_id
+                        else WaiverType(w.type).label.lower() + " lien waiver"),
         "requested_date": w.sent_at or w.requested_at,
         "billing_name": sc.billing_name,
         "billing_email": waiver_email(sc),
@@ -111,9 +116,45 @@ def merge_values(db: Session, w: Waiver, mb: Mailbox | None) -> dict:
         "pm_first_name": templates.first_name(project.pm_name),
         # Payment gating is warn-only (decision 4), so emails never say payment is held.
         "gate": False,
-        # Supplier waivers arrive in Phase 4.
-        "suppliers": False, "supplier_names": "", "missing_supplier_waivers": False, "missing_supplier_names": "",
+        # The sub collects its suppliers' waivers and sends them with its own (we never email suppliers).
+        **_supplier_values(db, sc),
     }
+
+
+def _supplier_values(db: Session, sc) -> dict:
+    from app.suppliers import service as suppliers
+
+    names = [s.name for s in suppliers.active(db, sc)]
+    gone = [s.name for s in suppliers.missing(db, sc)]
+    return {"suppliers": bool(names), "supplier_names": ", ".join(names),
+            "missing_supplier_waivers": bool(gone), "missing_supplier_names": ", ".join(gone)}
+
+
+def recipients_for_sub(sc) -> tuple[list[str], list[str]]:
+    to = _dedupe([waiver_email(sc)])
+    cc = _dedupe([sc.pm_email, sc.estimator_email], exclude=to)
+    if not to and cc:
+        to, cc = cc[:1], cc[1:]
+    return to, cc
+
+
+def queue_supplier_list(db: Session, sc, actor: str = "system:suppliers") -> EmailMessage:
+    """The supplier-list request (template 09) to a major-trade sub. Waits in the Outbox unless
+    supplier_list is set to auto-send."""
+    project = sc.project
+    mb = mailboxes.sender_for_project(db, project)
+    values = {"id": sc.id, "first_name": templates.first_name(_recipient_name(db, sc)),
+              "project_name": project.name or project.number,
+              "supplier_min": f"${Decimal(str(get_setting(db, 'supplier_min'))):,.0f}",
+              "signature": (mb.signature or mb.display_name) if mb else "", "gate": False}
+    r = templates.render(db, "supplier_list", values)
+    to, cc = recipients_for_sub(sc)
+    e = _new_email(db, kind="supplier_list", project_number=project.number, vendor_id=sc.vendor_id,
+                   mailbox_id=mb.id if mb else None, to_addrs=to, cc_addrs=cc, subject=r.subject, body_text=r.body,
+                   token=f"SD-{sc.id}", created_by=actor,
+                   error=None if to else "No billing or PM email on this subcontract. Add a recipient before sending.")
+    maybe_auto_send(db, e)
+    return e
 
 
 def _attach_waiver_pdf(db: Session, e: EmailMessage, w: Waiver) -> None:
@@ -219,7 +260,8 @@ def draft_reply(db: Session, original: EmailMessage, kind: str, values: dict | N
 
 def kind_template(kind: str) -> str:
     return {"reminder_1": "reminder_1", "reminder_2": "reminder_2", "correction": "correction",
-            "received": "received", "escalation": "escalation", "cancelled": "cancelled"}[kind]
+            "received": "received", "escalation": "escalation", "cancelled": "cancelled",
+            "supplier_list_reminder": "supplier_list_reminder"}[kind]
 
 
 def draft_escalation(db: Session, w: Waiver, actor: str = "system:mail") -> EmailMessage | None:
@@ -334,6 +376,14 @@ def _label(db: Session, mb: Mailbox, provider, thread_id: str) -> None:
 def _after_send(db: Session, e: EmailMessage, actor: str) -> None:
     from app.waivers import service as waivers
 
+    if e.kind in ("supplier_list", "supplier_list_reminder") and (e.token or "").startswith("SD-"):
+        from app.db.models import Subcontract
+        sc = db.get(Subcontract, int(e.token.split("-", 1)[1]))
+        if sc is not None and e.kind == "supplier_list":
+            sc.supplier_list_requested_at = e.sent_at  # reminders count from when it actually went out
+        elif sc is not None:
+            sc.supplier_list_reminders = (sc.supplier_list_reminders or 0) + 1
+        return
     w = e.waiver
     if not w:
         return

@@ -13,6 +13,27 @@ This app replaces the Zapier + Smartsheet lien waiver automation. It keeps its o
 | 4b | Supplier disclosure for major trades | Next |
 | 5 | Payment status view (warn only), auto-send switches, deployment runbook | |
 
+## Pages
+The menu has three tabs.
+
+- **Today** (`/`): everything that needs a person, top to bottom.
+  1. **Ready to send**: waiver requests and follow-ups the app wrote, with Preview, Send and Send all. Anything that can't go out says why, with a Fix link.
+  2. **Signed copies back**: returned waivers with the automatic check in plain words, plus Accept and Send back (which drafts the "please correct" reply).
+  3. **Quick questions**: one sentence and at most two buttons each, for things the app couldn't decide (unplaced AP rows, change orders with no sub, retention checks, blocked waivers, other review items, new contacts, waiver mail not tied to a waiver). Ones holding up a waiver come first.
+  4. **Waiting on subs**: what's out and the next automatic reminder, with an Upload link for copies that came another way.
+- **Jobs** (`/jobs`): one search box. Tracked jobs first (contract, billed, cost to complete, % complete, open waivers); each row opens to its subs and their signed waiver, and has **Download waivers**. Below, the active projects that aren't tracked, with **Track**. Which INTAKE statuses count as active is on Settings.
+- **More** (`/more`): All waivers, Past waivers, Email center, Contacts, Full CTC report, Queues, Sync log, Daily digest, Settings.
+
+**Download waivers** gives one PDF: a cover page listing every sub with the waiver included or **No signed waiver yet**, then each sub's signed unconditional final, else conditional final, else most recent partial, each from a new page. A job with nothing signed still downloads the cover page.
+
+**Suppliers.** Under each sub on Jobs and on the job page, **Suppliers (n)** opens the sub's suppliers on that job: what they supply, a rough amount, and their waiver status in plain words, with Add, Edit and Remove (AP/Admin).
+- Subs whose revised contract is at least the supplier minimum (Settings, default $20,000), and that aren't labor only, get the supplier-list request (template 09) once: when the job is first tracked, or when they first cross the minimum. It waits under Ready to send like every other email. A missing list follows the normal reminder days.
+- A reply is read with Claude. Each supplier it finds becomes a yes/no Quick question; nothing is added without a click. "No suppliers over the minimum" marks the sub. Without an API key, the reply becomes a question to add them by hand.
+- Waiver requests to a sub with suppliers ask the sub to send its suppliers' waivers too. The app never emails a supplier. When the sub's email carries a supplier's signed waiver, it's filed under that supplier and shows in Signed copies back as "Supplier waiver: ABC Supply (for Crown Coverings)". A sub's final drafted while supplier waivers are missing becomes a Quick question.
+- **Download waivers** with "Include suppliers' waivers" lists each sub's suppliers under it on the cover page and puts their waivers right after the sub's.
+
+Old addresses still work (`/projects` goes to the Jobs page's untracked list; `/jobs?by=sub` goes to the Full CTC report).
+
 ## How it works (Phase 1)
 
 - **Sync** (every 15 minutes by default, plus **Sync now**). It reads INTAKE and Archived Projects in full so the picker stays current. Subcontracts, change orders and AR/AP payables are stored **only for tracked projects**. Every run is logged on the Sync log page.
