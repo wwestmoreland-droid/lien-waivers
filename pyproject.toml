@@ -20,6 +20,7 @@ dependencies = [
     "openpyxl>=3.1",
     "pypdf>=4.0",
     "reportlab>=4.0",
+    "pillow-heif>=0.18",
     "pyyaml>=6.0",
     "rapidfuzz>=3.9",
     "structlog>=24.1",

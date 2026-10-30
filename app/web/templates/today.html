@@ -61,6 +61,7 @@
       {% else %}<div><strong>{{ w.subcontract.vendor.name }}</strong> <span class="pill">{{ WaiverType(w.type).label }}</span></div>{% endif %}
       <div class="small muted">{{ w.subcontract.project.number }} {{ w.subcontract.project.name or '' }}{% if w.amount is not none %} · {{ w.amount|money }}{% endif %}</div>
       <div class="small">{% if ok %}<strong class="ok-t">Looks right:</strong>{% elif ok is false %}<strong class="bad-t">Problem:</strong>{% endif %} {{ words }}</div>
+      {% if (w.verification or {}).get('note') %}<div class="small"><strong class="bad-t">Check:</strong> {{ w.verification.note }}</div>{% endif %}
     </div>
     <div class="item-actions">
       <a class="btn" href="/waivers/{{ w.id }}/signed" target="_blank">View PDF</a>

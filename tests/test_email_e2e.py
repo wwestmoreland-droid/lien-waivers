@@ -104,7 +104,7 @@ def test_reply_in_thread_is_received_and_reject_drafts_correction(mail):
     outbound.send(db, correction, "ap")
     # Corrected copy arrives; accept it.
     mail.box.deliver(from_addr="ap@deltafire.com", subject="Re: fixed", thread_id=e.provider_thread_id,
-                     attachments=[InAttachment("signed2.pdf", "application/pdf", PDF)])
+                     attachments=[InAttachment("signed2.pdf", "application/pdf", PDF + b" notarized")])
     inbound.poll_all(db)
     db.expire_all()
     w = db.get(Waiver, w.id)

@@ -69,14 +69,30 @@ def test_our_own_unsigned_copy_coming_back_isnt_reviewed(mail):
     assert db.get(Waiver, w.id).status == WaiverStatus.SENT
 
 
-def test_reply_saying_not_signed_isnt_reviewed(mail):
+def test_reply_saying_not_signed_with_a_real_file(mail):
+    """They say it isn't signed but attach a real file. Without the automatic check the app can't
+    tell, so it's filed for review with their words shown next to it (never hidden)."""
     db = mail.db
     w, e = send_request(mail)
     _reply(mail, e, "I sent this over to our accounting department. Will get it signed and send it back.",
            [InAttachment("invoice.pdf", "application/pdf", PDF)])
     w = db.get(Waiver, w.id)
+    assert w.status == WaiverStatus.RECEIVED
+    assert "accounting department" in w.verification["note"]
+
+
+def test_reply_saying_not_signed_check_agrees(mail, monkeypatch):
+    from app.mail import verify
+    db = mail.db
+    w, e = send_request(mail)
+    monkeypatch.setattr(verify, "verify", lambda w_, att, client=None: {
+        "status": "issues", "problems": ["it isn't signed"],
+        "found": {"is_lien_waiver": True, "appears_signed": False, "notary_completed": False}})
+    _reply(mail, e, "Forwarded to our billing department, they will sign it.",
+           [InAttachment("w.pdf", "application/pdf", PDF)])
+    w = db.get(Waiver, w.id)
     assert w.status == WaiverStatus.SENT
-    assert "accounting department" in next(ev.note for ev in w.events if ev.action == "reply_not_signed")
+    assert "billing department" in next(ev.note for ev in w.events if ev.action == "reply_not_signed")
 
 
 def test_a_real_signed_copy_is_still_filed(mail):

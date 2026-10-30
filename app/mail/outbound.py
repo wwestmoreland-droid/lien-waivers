@@ -244,6 +244,22 @@ def thread_root(db: Session, w: Waiver) -> EmailMessage | None:
                                                 EmailMessage.status == "sent").order_by(EmailMessage.id))
 
 
+def draft_new_reminder(db: Session, w: Waiver, kind: str) -> EmailMessage:
+    """A reminder as a fresh email (for a waiver that was sent outside the app)."""
+    mb = mailboxes.sender_for_project(db, w.subcontract.project)
+    r = templates.render(db, kind_template(kind), merge_values(db, w, mb))
+    req = templates.render(db, REQUEST_TEMPLATE[WaiverType(w.type)], merge_values(db, w, mb))
+    to, cc = recipients_for(w)
+    e = _new_email(db, kind=kind, waiver_id=w.id, project_number=w.subcontract.project.number,
+                   vendor_id=w.subcontract.vendor_id, mailbox_id=mb.id if mb else None, to_addrs=to, cc_addrs=cc,
+                   subject="Reminder: " + (req.subject or f"Lien waiver [LW-{w.id}]"), body_text=r.body,
+                   token=token_for(w), created_by="system:mail",
+                   error=None if to else "No billing or PM email on this subcontract. Add a recipient before sending.")
+    if kind == "reminder_1":
+        _attach_waiver_pdf(db, e, w)
+    return e
+
+
 def thread_people(db: Session, original: EmailMessage, mb: Mailbox | None) -> tuple[list[str], list[str], EmailMessage]:
     """Reply-all for the whole thread: everyone who wrote or was copied on it, except our own
     mailbox. Returns (to, cc, latest message) so people a sub loops in later stay on the chain."""
@@ -262,6 +278,11 @@ def thread_people(db: Session, original: EmailMessage, mb: Mailbox | None) -> tu
             cc += (m.to_addrs or []) + (m.cc_addrs or [])
         elif m.direction == "out":
             cc += (m.cc_addrs or [])
+    w = original.waiver
+    if w is not None and w.supplier_id is None:
+        current = waiver_email(w.subcontract)  # e.g. a billing contact picked after the request went out
+        if current:
+            to.append(current)
     to = _dedupe(to, exclude=ours)
     cc = _dedupe(cc, exclude=list(ours) + to)
     latest = next((m for m in reversed(msgs) if m.rfc_message_id), original)
