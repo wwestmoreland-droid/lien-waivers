@@ -1,4 +1,5 @@
 from datetime import date, datetime
+from functools import lru_cache
 from decimal import Decimal
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -83,6 +84,20 @@ def _today_count(user) -> int:
         db.close()
 
 
+_STATIC = Path(__file__).parent / "static"
+
+
+@lru_cache
+def _static_version(name: str) -> str:
+    """A short fingerprint of a static file, added to its link so browsers (Safari on iPad
+    especially) fetch the new copy after every deploy instead of a saved old one."""
+    import hashlib
+    try:
+        return hashlib.sha256((_STATIC / name).read_bytes()).hexdigest()[:10]
+    except OSError:
+        return "0"
+
+
 def _kind_labels():
     from app.mail.outbound import KIND_LABELS
     return KIND_LABELS
@@ -90,5 +105,5 @@ def _kind_labels():
 
 from app.waivers.types import WaiverType  # noqa: E402
 
-templates.env.globals.update(mail_banner=_mail_banner, outbox_count=_outbox_count, today_count=_today_count, KIND_LABELS=_kind_labels(),
+templates.env.globals.update(static_version=_static_version, mail_banner=_mail_banner, outbox_count=_outbox_count, today_count=_today_count, KIND_LABELS=_kind_labels(),
                              WaiverType=WaiverType)

@@ -480,3 +480,13 @@ def test_job_page_sub_cards_and_unconditional_final(client, db, source):
             assert "no paid invoice" in r.text
     finally:
         mailboxes.set_provider_factory(None)
+
+
+def test_stylesheet_link_changes_with_its_contents(client):
+    import hashlib
+    from pathlib import Path
+
+    from app.web import routes as r
+    css = (Path(r.__file__).parent / "static" / "app.css").read_bytes()
+    page = client.get("/more").text
+    assert f'/static/app.css?v={hashlib.sha256(css).hexdigest()[:10]}"' in page
