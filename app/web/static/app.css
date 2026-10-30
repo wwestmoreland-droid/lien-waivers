@@ -146,3 +146,17 @@ tr.sub-sups td { border-top: 0; padding-top: 0; }
 .sup-line { display: flex; gap: 4px 14px; flex-wrap: wrap; align-items: flex-start; margin-top: 2px; }
 .sup-switch { margin: 0; }
 .sup-switch input[type=checkbox] { min-height: 0; width: 18px; height: 18px; vertical-align: -4px; }
+
+/* ---------- job page: one card per sub ---------- */
+.subcards { display: grid; gap: 8px; margin-bottom: 18px; }
+.subcard { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.subcard > summary { display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: baseline; }
+.subcard.total { display: flex; flex-wrap: wrap; gap: 6px 18px; background: #fafbfc; }
+.sc-name { flex: 1 1 220px; display: flex; flex-direction: column; gap: 2px; }
+.sub-name { display: inline-flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; }
+.sc-waiver { flex: 1 1 180px; text-align: right; }
+.sc-body { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 10px; display: grid; gap: 8px; }
+.sc-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; font-variant-numeric: tabular-nums; }
+.sc-grid .lbl, .sc-line .lbl { display: block; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .03em; }
+.final-form { display: grid; gap: 8px; max-width: 560px; margin-top: 6px; }
+@media (max-width: 640px) { .sc-waiver { text-align: left; } }

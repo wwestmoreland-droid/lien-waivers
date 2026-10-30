@@ -19,29 +19,87 @@
 </div>
 {% if not p.is_tracked %}<div class="warnbox">This project is not tracked. Data shown is from when it was.</div>{% endif %}
 
-{% with show_project=false %}{% include "partials/ctc_rows.html" %}{% endwith %}
+{% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
+{% set back = '/jobs/' ~ p.number ~ '#subs' %}
+{% set ed = user.role in ('Admin', 'AP') %}
+{% set status_badge = {'ok': '', 'complete': 'ok', 'over_billed': 'bad', 'no_contract': 'warn'} %}
+<h2 id="subs">Subs</h2>
+<p class="small muted">Click a sub for its cost to complete, latest invoice, signed waiver and suppliers. The waiver that counts is the unconditional final if there is one, otherwise the conditional final, otherwise the most recent partial.</p>
+<div class="subcards">
+  {% for r in subs %}{% set sc = r.sc %}{% set c = r.ctc %}{% set w = r.waiver %}{% set i = r.invoice %}{% set uf = r.final %}
+  <details class="subcard" id="sub-{{ sc.id }}">
+    <summary>
+      <span class="sc-name"><strong>{{ sc.vendor.name }}</strong>
+        {% with back=back %}{% include "partials/supplier_switch.html" %}{% endwith %}</span>
+      {% if c %}
+      <span class="job-num"><span class="lbl">Contract</span>{{ c.revised_contract|money }}</span>
+      <span class="job-num"><span class="lbl">Billed</span>{{ c.billed|money }}</span>
+      <span class="job-num"><span class="lbl">Cost to complete</span>{{ c.ctc|money }}</span>
+      <span class="job-num"><span class="lbl">Complete</span>{{ c.pct_complete|pct or '–' }}</span>
+      {% endif %}
+      <span class="sc-waiver small">{% if w %}{{ WaiverType(w.type).label }}, signed{% else %}<span class="muted">No signed waiver yet</span>{% endif %}
+        {% if c and c.status != 'ok' %}<span class="badge {{ status_badge.get(c.status, '') }}">{{ c.status|replace('_', ' ') }}</span>{% endif %}</span>
+    </summary>
+    <div class="sc-body">
+      {% if c %}
+      <div class="sc-grid">
+        <div><span class="lbl">Original</span>{{ c.original_contract|money }}</div>
+        <div><span class="lbl">Approved COs</span>{{ c.approved_cos|money }}</div>
+        <div><span class="lbl">Pending COs (not included)</span>{{ c.pending_cos|money }}</div>
+        <div><span class="lbl">Paid</span>{{ c.paid|money }}</div>
+        <div><span class="lbl">Retainage held</span>{{ c.retainage_held|money }}</div>
+        <div><span class="lbl">On hold</span>{{ c.hold|money }}</div>
+        <div><span class="lbl">Open waivers</span>{% if c.open_waivers %}<a href="/waivers?status=open&q={{ sc.vendor.name|urlencode }}&project={{ p.number }}">{{ c.open_waivers }}</a>{% else %}0{% endif %}</div>
+      </div>
+      {% endif %}
+      <div class="sc-line"><span class="lbl">Latest invoice</span>
+        {% if i %}{{ i.invoice_no or '(no number)' }} · {{ i.amount|money }} <span class="muted">· {{ 'paid ' ~ (i.paid_date|fdate) if i.paid_date else (i.approval_status or 'not approved') }}</span>{% else %}<span class="muted">none yet</span>{% endif %}</div>
+      <div class="sc-line"><span class="lbl">Signed waiver on file</span>
+        {% if w %}<a href="/waivers/{{ w.id }}/signed" target="_blank">{{ WaiverType(w.type).label }}</a>
+          {% if w.amount is not none %}· {{ w.amount|money }}{% endif %}{% if not WaiverType(w.type).is_final and w.through_date %} · through {{ w.through_date|fdate }}{% endif %}
+          {% if w.status == 'received' %}<span class="badge warn">not reviewed yet</span>{% else %}<span class="badge ok">accepted</span>{% endif %}
+          · <a class="small" href="/waivers/{{ w.id }}">details</a>
+        {% else %}<span class="muted">none yet</span>{% endif %}</div>
 
-<h2 id="waivers">Signed waivers by sub</h2>
-<p class="small muted">For each sub: their latest invoice, and the signed waiver that counts: the unconditional final if there is one, otherwise the conditional final, otherwise the most recent partial. "Download waivers" puts these in one PDF after a cover page listing who's missing.</p>
-<div class="table-wrap"><table>
-  <tr><th>Sub</th><th>Latest invoice</th><th>Signed waiver on file</th><th></th></tr>
-  {% for r in waiver_rows %}
-  {% set w = r.waiver %}{% set i = r.invoice %}
-  <tr>
-    <td><a href="/subs/{{ r.sc.id }}">{{ r.sc.vendor.name }}</a></td>
-    <td class="small">{% if i %}{{ i.invoice_no or '(no number)' }} · {{ i.amount|money }}
-      <span class="muted">· {{ 'paid ' ~ (i.paid_date|fdate) if i.paid_date else (i.approval_status or 'not approved') }}</span>{% else %}<span class="muted">none yet</span>{% endif %}</td>
-    <td>{% if w %}<a href="/waivers/{{ w.id }}/signed" target="_blank">{{ WaiverType(w.type).label }}</a>
-      <span class="small">{% if w.amount is not none %}· {{ w.amount|money }}{% endif %}{% if not WaiverType(w.type).is_final and w.through_date %} · through {{ w.through_date|fdate }}{% endif %}</span>
-      {% if w.status == 'received' %}<span class="badge warn">not reviewed yet</span>{% else %}<span class="badge ok">accepted</span>{% endif %}
-      {% else %}<span class="muted small">none signed yet</span>{% endif %}</td>
-    <td>{% if w %}<a class="small" href="/waivers/{{ w.id }}">details</a>{% endif %}</td>
-  </tr>
-  <tr class="sub-sups"><td colspan="4">{% with back='/jobs/' ~ p.number ~ '#waivers' %}{% include "partials/suppliers.html" %}{% endwith %}</td></tr>
+      <div class="sc-line"><span class="lbl">Unconditional final</span>
+        {% if uf %}
+          <a href="/waivers/{{ uf.id }}">{{ {'needs_review': 'blocked', 'draft': 'ready to send', 'void': 'cancelled'}.get(uf.status, uf.status) }}</a>
+          {% if uf.sent_at %}<span class="muted">· sent {{ uf.sent_at|fdate }}</span>{% endif %}
+        {% elif ed %}
+          <details class="pick final">
+            <summary class="btn sm primary">Send unconditional final</summary>
+            <form method="post" action="/subs/{{ sc.id }}/unconditional-final" class="final-form">
+              <input type="hidden" name="back" value="{{ back }}">
+              <div class="small">This tells {{ sc.vendor.name }} they've been <strong>paid in full</strong> on this job and asks them to sign.
+                {% set ck = r.checks %}
+                {% if ck.last_paid %}It goes with invoice {{ ck.last_paid.invoice_no or '(no number)' }}, paid {{ ck.last_paid.paid_date|fdate }}.{% endif %}</div>
+              {% if not ck.last_paid %}<div class="warnbox">No invoice is paid yet, so there's nothing to attach it to.</div>{% endif %}
+              {% if ck.ctc and ck.ctc > 0 %}<div class="warnbox">Cost to complete is still {{ ck.ctc|money }}.</div>{% endif %}
+              {% if ck.unpaid %}<div class="warnbox">{{ ck.unpaid|length }} invoice{{ 's' if ck.unpaid|length != 1 }} not paid yet: {% for u in ck.unpaid %}{{ u.invoice_no or '(no number)' }} {{ u.amount|money }}{{ ', ' if not loop.last }}{% endfor %}.</div>{% endif %}
+              {% if ck.last_paid %}<div class="row-actions">
+                <button class="btn primary" name="send" value="1">Send it now</button>
+                <button class="btn" name="send" value="">Put it in Ready to send</button>
+              </div>{% endif %}
+            </form>
+          </details>
+        {% else %}<span class="muted">none yet</span>{% endif %}
+      </div>
+
+      {% with back=back %}{% include "partials/suppliers.html" %}{% endwith %}
+      <div class="small" style="margin-top:6px"><a href="/subs/{{ sc.id }}">Payables, change orders and history →</a></div>
+    </div>
+  </details>
   {% else %}
-  <tr><td colspan="4" class="muted">No subcontracts on this job.</td></tr>
+  <div class="empty muted">No subcontracts on this job.</div>
   {% endfor %}
-</table></div>
+  {% if subs %}
+  <div class="subcard total"><span class="sc-name"><strong>Total</strong></span>
+    <span class="job-num"><span class="lbl">Contract</span>{{ totals.revised_contract|money }}</span>
+    <span class="job-num"><span class="lbl">Billed</span>{{ totals.billed|money }}</span>
+    <span class="job-num"><span class="lbl">Cost to complete</span>{{ totals.ctc|money }}</span>
+    <span class="job-num"><span class="lbl">Paid</span>{{ totals.paid|money }}</span></div>
+  {% endif %}
+</div>
 
 {% if unmatched %}
 <h2>Unmatched payables on this job</h2>

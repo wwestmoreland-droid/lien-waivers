@@ -695,3 +695,43 @@ def job_waiver_packet(db: Session, project: Project, include_suppliers: bool = F
     buf = io.BytesIO()
     out.write(buf)
     return buf.getvalue()
+
+
+# ---------------------------------------------------------------- unconditional final by hand
+
+def current_unconditional_final(db: Session, sc: Subcontract) -> Waiver | None:
+    """The sub's own unconditional final on this job, if one exists (cancelled ones don't count)."""
+    return db.scalar(select(Waiver).where(Waiver.subcontract_id == sc.id, Waiver.supplier_id.is_(None),
+                                          Waiver.type == WaiverType.UNCONDITIONAL_FINAL.value,
+                                          Waiver.status != WaiverStatus.VOID.value).order_by(Waiver.id.desc()))
+
+
+def final_checks(sc: Subcontract) -> dict:
+    """What a person should know before sending an unconditional final ("paid in full")."""
+    ctc = compute_for_subcontract(sc)
+    pays = [p for p in sc.payables if not p.deleted_in_source and (p.approval_status or "").strip().lower() != "rejected"]
+    paid = [p for p in pays if p.paid_date]
+    return {"ctc": ctc.cost_to_complete, "unpaid": [p for p in pays if not p.paid_date],
+            "last_paid": max(paid, key=lambda p: (p.paid_date, order_key(p))) if paid else None}
+
+
+def prepare_unconditional_final(db: Session, sc: Subcontract, actor: str) -> Waiver:
+    """Create the sub's unconditional final against its most recent paid invoice. Its request
+    email is drafted like any other waiver's."""
+    existing = current_unconditional_final(db, sc)
+    if existing is not None:
+        raise ValueError(f"{sc.vendor.name} already has an unconditional final (#{existing.id}, {existing.status}).")
+    last = final_checks(sc)["last_paid"]
+    if last is None:
+        raise ValueError(f"{sc.vendor.name} has no paid invoice on this job yet.")
+    # A cancelled one on the same invoice is brought back rather than duplicated.
+    void = db.scalar(select(Waiver).where(Waiver.payable_id == last.id, Waiver.supplier_id.is_(None),
+                                          Waiver.type == WaiverType.UNCONDITIONAL_FINAL.value))
+    if void is not None:
+        restore(db, void, actor)
+        w = void
+    else:
+        w = create_waiver(db, last, sc, WaiverType.UNCONDITIONAL_FINAL, None, actor)
+    log_event(db, w, actor, "prepared", note="unconditional final requested by hand from the job page")
+    audit(db, actor, "waiver.final_by_hand", "subcontract", sc.id, waiver_id=w.id)
+    return w

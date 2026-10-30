@@ -192,9 +192,51 @@ def job_detail(request: Request, number: str, db: Session = Depends(get_db), use
     direct = db.scalars(select(Payable).where(Payable.project_number == number,
                                               Payable.match_status == "direct_purchase",
                                               Payable.deleted_in_source.is_(False))).all()
-    return render(request, "job_detail.html", user, p=p, rows=rows, unmatched=unmatched, direct=direct,
-                  waiver_rows=waiver_service.job_waiver_rows(db, p),
+    ctc_by_sub = {r.subcontract_id: r for r in rows}
+    subs = []
+    for r in waiver_service.job_waiver_rows(db, p):
+        sc = r["sc"]
+        subs.append(r | {"ctc": ctc_by_sub.get(sc.id), "final": waiver_service.current_unconditional_final(db, sc),
+                         "checks": waiver_service.final_checks(sc)})
+    return render(request, "job_detail.html", user, p=p, rows=rows, unmatched=unmatched, direct=direct, subs=subs,
+                  msg=request.query_params.get("msg", ""),
                   totals={f: sum((getattr(r, f) for r in rows), report.ZERO) for f in report.MONEY_FIELDS})
+
+
+@router.post("/subs/{sc_id}/unconditional-final")
+def unconditional_final(sc_id: int, send: str = Form(""), back: str = Form(""), db: Session = Depends(get_db),
+                        user: User = Depends(require_role(*EDITORS))):
+    """'Send unconditional final' next to a sub: create it, then send it now or leave it in Ready to send."""
+    from app.db.models import EmailMessage
+    from app.mail import outbound
+
+    sc = db.get(Subcontract, sc_id)
+    if not sc:
+        raise HTTPException(404)
+    default = f"/jobs/{sc.project.number}"
+    try:
+        w = waiver_service.prepare_unconditional_final(db, sc, user.email)
+    except ValueError as exc:
+        db.rollback()
+        return RedirectResponse(with_msg(safe_back(back, default), str(exc)), status_code=303)
+    db.commit()
+    name = sc.vendor.name
+    if w.status == "needs_review":
+        msg = f"Unconditional final for {name} is blocked: {w.review_reason}"
+    else:
+        e = db.scalar(select(EmailMessage).where(EmailMessage.waiver_id == w.id, EmailMessage.kind == "waiver_request",
+                                                 EmailMessage.status.in_(("draft", "queued", "failed"))))
+        if send != "1" or e is None:
+            msg = f"Unconditional final for {name} is ready under Ready to send on Today."
+        else:
+            try:
+                ok = outbound.send(db, e, user.email)
+            except ValueError as exc:
+                ok, e.error = False, str(exc)
+            db.commit()
+            msg = (f"Sent the unconditional final to {name} ({', '.join(e.to_addrs or [])})." if ok
+                   else f"Unconditional final for {name} is created but not sent: {e.error or 'see Ready to send'}")
+    return RedirectResponse(with_msg(safe_back(back, default), msg), status_code=303)
 
 
 @router.get("/jobs/{number}/signed-waivers.pdf")
