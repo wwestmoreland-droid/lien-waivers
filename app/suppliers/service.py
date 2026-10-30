@@ -340,7 +340,7 @@ def file_supplier_waiver(db: Session, sub_waiver: Waiver, s: Supplier, att: Emai
     """A supplier's signed waiver that came in with the sub's: filed under that supplier."""
     from pathlib import Path
 
-    from app.mail.verify import compare_supplier
+    from app.mail.verify import compare_supplier, supplier_through_date
     from app.services import filestore
     from app.waivers import service as waivers
 
@@ -353,7 +353,8 @@ def file_supplier_waiver(db: Session, sub_waiver: Waiver, s: Supplier, att: Emai
     if w is None:
         w = Waiver(payable_id=sub_waiver.payable_id, subcontract_id=sub_waiver.subcontract_id, supplier_id=s.id,
                    type=wtype, state=sub_waiver.state, amount=to_amount(found.get("amount")),
-                   through_date=sub_waiver.through_date, through_date_is_fallback=sub_waiver.through_date_is_fallback,
+                   through_date=supplier_through_date(sub_waiver) or sub_waiver.through_date,
+                   through_date_is_fallback=sub_waiver.through_date_is_fallback,
                    status=WaiverStatus.SENT.value, sent_at=sub_waiver.sent_at, requested_at=sub_waiver.requested_at,
                    reviewer_email=sub_waiver.reviewer_email)
         db.add(w)

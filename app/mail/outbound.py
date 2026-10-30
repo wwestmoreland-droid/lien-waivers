@@ -117,17 +117,34 @@ def merge_values(db: Session, w: Waiver, mb: Mailbox | None) -> dict:
         # Payment gating is warn-only (decision 4), so emails never say payment is held.
         "gate": False,
         # The sub collects its suppliers' waivers and sends them with its own (we never email suppliers).
-        **_supplier_values(db, sc),
+        **_supplier_values(db, sc, w),
     }
 
 
-def _supplier_values(db: Session, sc) -> dict:
+def _supplier_values(db: Session, sc, w: Waiver | None = None) -> dict:
+    """The sub collects its suppliers' waivers and sends them to us; we never chase suppliers.
+    With a partial, they're for the previous pay application (supplier_prev_through)."""
     from app.suppliers import service as suppliers
 
     names = [s.name for s in suppliers.active(db, sc)]
     gone = [s.name for s in suppliers.missing(db, sc)]
+    prev = previous_pay_app(sc, w.payable) if (w is not None and names) else None
     return {"suppliers": bool(names), "supplier_names": ", ".join(names),
+            "supplier_prev": prev is not None, "supplier_prev_through": prev.through_date if prev else None,
+            "supplier_prev_invoice": prev.invoice_no if prev else None,
             "missing_supplier_waivers": bool(gone), "missing_supplier_names": ", ".join(gone)}
+
+
+def previous_pay_app(sc, p) -> object | None:
+    """The sub's pay application paid before this one on the job (None for the first)."""
+    from app.ctc.engine import order_key
+
+    if p is None:
+        return None
+    earlier = [x for x in sc.payables if x.id != p.id and not x.deleted_in_source and x.paid_date
+               and (x.approval_status or "").strip().lower() != "rejected"
+               and (p.paid_date is None or (x.paid_date, order_key(x)) < (p.paid_date, order_key(p)))]
+    return max(earlier, key=lambda x: (x.paid_date, order_key(x))) if earlier else None
 
 
 def recipients_for_sub(sc) -> tuple[list[str], list[str]]:

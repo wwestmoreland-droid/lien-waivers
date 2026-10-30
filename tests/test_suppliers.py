@@ -133,7 +133,10 @@ def test_request_asks_for_supplier_waivers_and_files_them(mail, monkeypatch):
     abc = suppliers.add(db, delta, "ap", "ABC Supply", "pipe")
     db.commit()
     w, e = send_request(mail)
-    assert "Please also send signed lien waivers from your suppliers on this job" in e.body_text and "ABC Supply" in e.body_text
+    # Pay App 2's request asks for the suppliers' waivers for Pay App 1, needed before the next payment.
+    assert "collect signed lien waivers from your suppliers (ABC Supply) for your previous pay application, " \
+           "through Sep 30, 2026" in e.body_text
+    assert "We'll need them before we can release your next payment." in e.body_text
 
     def fake_verify(w_, att, client=None):
         supplier = att.filename.startswith("abc")
@@ -242,3 +245,58 @@ def test_sub_checkbox_turns_suppliers_off_and_back_on(mail):
         assert "ABC Supply" in c.get("/jobs").text
     db.expire_all()
     assert [s.id for s in suppliers.active(db, db.get(Subcontract, delta.id))] == [abc.id]
+
+
+def test_supplier_requests_by_waiver_type(mail):
+    from datetime import date
+    db = mail.db
+    delta = sub(db, 101)
+    suppliers.add(db, delta, "ap", "ABC Supply")
+    db.commit()
+    first = db.scalar(select(Waiver).where(Waiver.payable.has(source_row_id=1001)))
+    if first is None:  # Pay App 1 was paid before tracking: prepare its waiver
+        [first] = waivers.prepare_past(db, [p.payable.id for p in waivers.past_paid_invoices(db)
+                                            if p.payable.source_row_id == 1001], "ap")
+    db.commit()
+    # The first pay application has nothing earlier to ask the suppliers about.
+    v = outbound.merge_values(db, first, mail.sender)
+    assert v["suppliers"] and not v["supplier_prev"]
+    assert "suppliers" not in outbound.templates.render(db, "partial", v).body
+    # Pay App 2: the suppliers' waivers for Pay App 1 (through its date), needed before the next payment.
+    second = pay(mail, 1003)
+    v = outbound.merge_values(db, second, mail.sender)
+    assert v["supplier_prev"] and v["supplier_prev_through"] == date(2026, 9, 30)
+    # Finals ask for the matching final type from the suppliers, collected by the sub.
+    cf = waivers.create_waiver(db, second.payable, delta, WaiverType.CONDITIONAL_FINAL, None)
+    uf = waivers.create_waiver(db, second.payable, delta, WaiverType.UNCONDITIONAL_FINAL, None)
+    body_cf = outbound.templates.render(db, "conditional_final", outbound.merge_values(db, cf, mail.sender)).body
+    body_uf = outbound.templates.render(db, "unconditional_final", outbound.merge_values(db, uf, mail.sender)).body
+    assert "collect conditional final lien waivers from your suppliers on this job (ABC Supply)" in body_cf
+    assert "collect unconditional final lien waivers from your suppliers on this job (ABC Supply)" in body_uf
+
+
+def test_supplier_partial_is_checked_against_the_previous_pay_app(mail, monkeypatch):
+    from app.mail import verify
+    db = mail.db
+    delta = sub(db, 101)
+    abc = suppliers.add(db, delta, "ap", "ABC Supply")
+    db.commit()
+    w, e = send_request(mail)  # Pay App 2, through Oct 31; Pay App 1 was through Sep 30
+
+    def fake(w_, att, client=None):
+        supplier = att.filename.startswith("abc")
+        through = "2026-10-31" if supplier else w_.through_date.isoformat()  # supplier dated the wrong period
+        return {"status": "looks_good", "problems": [], "found": {
+            "is_lien_waiver": True, "appears_signed": True, "notary_completed": True,
+            "waiver_type": "unconditional_partial", "amount": None, "through_date": through,
+            "project_matches": True, "signer_company": "ABC Supply" if supplier else "Delta",
+            "is_supplier_waiver": supplier}}
+    monkeypatch.setattr(verify, "verify", fake)
+    mail.box.deliver(from_addr="ap@deltafire.com", subject="Re: " + e.subject, thread_id=e.provider_thread_id,
+                     attachments=[InAttachment("abc.pdf", "application/pdf", signed_pdf("ABC")),
+                                  InAttachment("delta.pdf", "application/pdf", signed_pdf("Delta"))])
+    inbound.poll_all(db)
+    db.expire_all()
+    sw = db.scalar(select(Waiver).where(Waiver.supplier_id == abc.id))
+    assert str(sw.through_date) == "2026-09-30"
+    assert sw.verification["problems"] == ["the date should be Sep 30, 2026"]

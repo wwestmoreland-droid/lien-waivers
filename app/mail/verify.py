@@ -111,16 +111,28 @@ def compare(w: Waiver, found: dict, notary_required: bool = True) -> list[str]:
     return problems
 
 
+def supplier_through_date(sub_waiver: Waiver):
+    """Supplier partials that come with a sub's partial are for the sub's previous pay application."""
+    from app.mail.outbound import previous_pay_app
+
+    if WaiverType(sub_waiver.type).is_final:
+        return None
+    prev = previous_pay_app(sub_waiver.subcontract, sub_waiver.payable)
+    return prev.through_date if prev else sub_waiver.through_date
+
+
 def compare_supplier(sub_waiver: Waiver, found: dict, notary_required: bool = True) -> list[str]:
-    """A supplier's waiver that came with the sub's: signed, notarized, and through the same date."""
+    """A supplier's waiver that came with the sub's: signed, notarized, and (for a partial)
+    through the sub's previous pay application."""
     problems = []
     if not found.get("appears_signed"):
         problems.append("it isn't signed")
     if notary_required and not found.get("notary_completed"):
         problems.append("the notary section is blank")
-    if sub_waiver.through_date and found.get("through_date") and found.get("waiver_type") in (
-            "conditional_partial", "unconditional_partial") and found["through_date"] != sub_waiver.through_date.isoformat():
-        problems.append(f"the date should be {sub_waiver.through_date:%b %-d, %Y}")
+    due = supplier_through_date(sub_waiver)
+    if due and found.get("through_date") and found.get("waiver_type") in (
+            "conditional_partial", "unconditional_partial") and found["through_date"] != due.isoformat():
+        problems.append(f"the date should be {due:%b %-d, %Y}")
     if found.get("project_matches") is False:
         problems.append("it's for the wrong project")
     return problems
