@@ -216,6 +216,17 @@ def reject(wid: int, reason: str = Form(...), custom_reason: str = Form(""), bac
                      "is under Ready to send.")
 
 
+@router.post("/waivers/{wid}/not-signed")
+def not_signed(wid: int, back: str = Form(""), db: Session = Depends(get_db),
+               user: User = Depends(require_role("Admin", "AP", "PM"))):
+    """'Not signed yet': back to waiting on the sub, without drafting a reply."""
+    w = _waiver(db, wid)
+    if user.role == "PM" and (w.subcontract.project.pm_email or "").lower() != user.email:
+        raise HTTPException(403, "PMs can do this on their own jobs only.")
+    return _act(db, w, service.undo_received, user.email, f"Marked not signed yet by {user.email}", back=back,
+                done=f"Back to waiting on {w.subcontract.vendor.name}. Nothing was sent to them.")
+
+
 @router.post("/waivers/{wid}/void")
 def void(wid: int, reason: str = Form(...), notify: str = Form(""), db: Session = Depends(get_db),
          user: User = Depends(require_role(*EDITORS))):

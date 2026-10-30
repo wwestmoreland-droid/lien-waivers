@@ -160,3 +160,5 @@ tr.sub-sups td { border-top: 0; padding-top: 0; }
 .sc-grid .lbl, .sc-line .lbl { display: block; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .03em; }
 .final-form { display: grid; gap: 8px; max-width: 560px; margin-top: 6px; }
 @media (max-width: 640px) { .sc-waiver { text-align: left; } }
+.sel-bar { margin: 2px 0 6px; }
+.pick-draft { width: 20px; height: 20px; margin-top: 2px; flex: none; }

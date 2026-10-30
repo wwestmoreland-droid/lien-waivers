@@ -59,7 +59,9 @@
   <tr><td colspan="8" class="muted">Nothing waiting to go out.</td></tr>
   {% endfor %}
 </table></div>
-{% if editor and rows %}<p><button class="btn primary">Send all selected</button></p>{% endif %}
+{% if editor and rows %}<p class="row-actions"><button class="btn primary">Send all selected</button>
+  <button class="btn danger" formaction="/today/delete-drafts" name="back" value="/email?view=outbox"
+          onclick="return confirm('Delete the selected drafts? A waiver request also cancels its waiver (Restore brings it back).')">Delete selected</button></p>{% endif %}
 </form>
 
 {% elif view == 'sent' %}

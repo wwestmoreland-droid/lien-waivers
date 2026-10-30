@@ -203,6 +203,12 @@ def quick_questions(db: Session, user) -> list[Question]:
         pm = (project.pm_email or "").lower() if project else ""
         if r.assignee_email and pm and r.assignee_email.lower() == pm and user.email != pm and user.role in EDITORS:
             continue  # sent to the PM; it's theirs now
+        if r.kind == "waiver_forwarded":
+            import re as _re
+            m = _re.search(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+", r.message)
+            qs.append(Question("forward", _review_sentence(r), False, f"/email/{r.ref_id}", r,
+                               {"addr": m.group(0).rstrip(".") if m else ""}))
+            continue
         if r.kind == "retention_check" and r.ref_type == "payable":
             p = db.get(Payable, r.ref_id)
             if p is None:

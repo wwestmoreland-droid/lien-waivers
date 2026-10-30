@@ -317,6 +317,17 @@ def mark_received(db: Session, w: Waiver, actor: str, filename: str, content: by
     log_event(db, w, actor, "received", WaiverStatus.RECEIVED.value, file=path.name)
 
 
+def undo_received(db: Session, w: Waiver, actor: str, note: str) -> None:
+    """It wasn't a signed copy after all: back to waiting on the sub. No email is drafted."""
+    if w.status != WaiverStatus.RECEIVED:
+        raise ValueError("Only a waiver that came back can be put back to waiting.")
+    log_event(db, w, actor, "not_signed", WaiverStatus.SENT.value, note=note, file=w.signed_pdf_path)
+    w.signed_pdf_path = None
+    w.received_at = None
+    w.verification = None
+    audit(db, actor, "waiver.not_signed", "waiver", w.id, note=note)
+
+
 def accept(db: Session, w: Waiver, actor: str, note: str = "") -> None:
     if w.status != WaiverStatus.RECEIVED:
         raise ValueError("Only a received waiver can be accepted.")
@@ -351,7 +362,7 @@ def void(db: Session, w: Waiver, actor: str, reason: str, notify_sub: bool = Fal
         upsert_review(db, kind, "waiver", w.id, None, "", False)
     root = outbound.thread_root(db, w) if was_sent and notify_sub else None
     if root is not None:
-        return outbound.draft_reply(db, root, "cancelled", actor=actor)
+        return outbound.draft_reply(db, root, "cancelled", actor=actor, everyone=True)
     return None
 
 
@@ -430,7 +441,7 @@ def reject_and_reply(db: Session, w: Waiver, actor: str, reason: str):
         return None
     if w.supplier_id:
         reason = f"{reason} (the waiver from {w.supplier.name})"
-    e = outbound.draft_reply(db, original, "correction", values={"reason": reason}, actor=actor)
+    e = outbound.draft_reply(db, original, "correction", values={"reason": reason}, actor=actor, everyone=True)
     outbound.maybe_auto_send(db, e)
     return e
 
@@ -448,7 +459,7 @@ def accept_and_ack(db: Session, w: Waiver, actor: str, note: str = ""):
                          .order_by(EmailMessage.id.desc()))
     if original is None:
         return None
-    e = outbound.draft_reply(db, original, "received", actor=actor)
+    e = outbound.draft_reply(db, original, "received", actor=actor, everyone=True)
     outbound.maybe_auto_send(db, e)
     return e
 

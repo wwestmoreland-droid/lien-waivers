@@ -15,11 +15,21 @@
     {% if ready|length > 1 %}<form method="post" action="/today/send-all"><button class="btn primary">Send all {{ ready|length }}</button></form>{% endif %}
   </div>
   <p class="sec-note">Waiver requests and follow-ups the app has written. Look one over if you like, then send.</p>
+  {% if to_send %}
+  <form id="del-form" method="post" action="/today/delete-drafts" onsubmit="return confirm('Delete the selected drafts? A waiver request also cancels its waiver (Restore on the waiver brings it back).')">
+    <input type="hidden" name="back" value="/">
+    <div class="row-actions sel-bar"><label class="small"><input type="checkbox" onclick="document.querySelectorAll('.pick-draft').forEach(c => c.checked = this.checked)"> Select all</label>
+      <button class="btn danger">Delete selected</button></div>
+  </form>
+  {% endif %}
   {% for t in to_send %}{% set e = t.email %}{% set w = t.waiver %}
   <div class="item">
+    <input class="pick-draft" type="checkbox" name="ids" value="{{ e.id }}" form="del-form" aria-label="Select this email">
     <div class="item-main">
       {% if w %}<div><strong>{{ w.subcontract.vendor.name }}</strong> <span class="pill">{{ KIND_LABELS.get(e.kind, 'Email') if e.kind != 'waiver_request' else WaiverType(w.type).label }}</span></div>
         <div class="small muted">{{ w.subcontract.project.number }} {{ w.subcontract.project.name or '' }}{% if w.amount is not none %} · {{ w.amount|money }}{% endif %}</div>
+      {% elif e.kind in ('supplier_list', 'supplier_list_reminder') and e.vendor %}<div><strong>{{ e.vendor.name }}</strong> <span class="pill">{{ KIND_LABELS.get(e.kind, 'Email') }}</span></div>
+        <div class="small muted">{{ e.project_number or '' }} · to {{ (e.to_addrs or ['(no recipient)'])|join(', ') }}</div>
       {% else %}<div><strong>{{ (e.to_addrs or ['(no recipient)'])|join(', ') }}</strong> <span class="pill">{{ KIND_LABELS.get(e.kind, 'Email') }}</span></div>
         <div class="small muted">{{ e.subject or '' }}</div>{% endif %}
       {% if t.note %}<div class="small">{{ t.note }}</div>{% endif %}
@@ -57,6 +67,8 @@
       {% if can_review(w) %}
         <form method="post" action="/waivers/{{ w.id }}/accept"><input type="hidden" name="back" value="{{ back }}">
           <button class="btn {{ 'primary' if ok is not false }}">{{ 'Accept anyway' if ok is false else 'Accept' }}</button></form>
+        <form method="post" action="/waivers/{{ w.id }}/not-signed"><input type="hidden" name="back" value="{{ back }}">
+          <button class="btn" title="Back to waiting on the sub. Nothing is sent to them.">Not signed yet</button></form>
         <details class="sendback">
           <summary class="btn {{ 'primary' if ok is false }}">Send back</summary>
           <form method="post" action="/waivers/{{ w.id }}/reject" class="sendback-form">
@@ -118,6 +130,9 @@
         <form method="post" action="/contacts/{{ o.id }}"><input type="hidden" name="back" value="{{ back }}"><input type="hidden" name="action" value="confirm">
           <input type="hidden" name="vendor_id" value="{{ o.vendor_id }}"><input type="hidden" name="role" value="{{ o.role or '' }}"><button class="btn primary">Yes</button></form>
         <form method="post" action="/contacts/{{ o.id }}"><input type="hidden" name="back" value="{{ back }}"><input type="hidden" name="action" value="ignore"><button class="btn">Ignore</button></form>
+      {% elif q.kind == 'forward' %}
+        <form method="post" action="/queues/review/{{ o.id }}/use-forward"><button class="btn primary">Yes, send there</button></form>
+        <form method="post" action="/queues/review/{{ o.id }}/dismiss"><input type="hidden" name="back" value="{{ back }}"><button class="btn">No</button></form>
       {% elif q.kind == 'candidate' %}
         <form method="post" action="/supplier-candidates/{{ o.id }}/yes"><input type="hidden" name="back" value="{{ back }}"><button class="btn primary">Yes</button></form>
         <form method="post" action="/supplier-candidates/{{ o.id }}/no"><input type="hidden" name="back" value="{{ back }}"><button class="btn">No</button></form>
@@ -144,6 +159,7 @@
       <div><strong>{{ w.subcontract.vendor.name }}</strong> <span class="pill">{{ WaiverType(w.type).label }}</span></div>
       <div class="small muted">{{ w.subcontract.project.number }}{% if w.sent_at %} · Sent {{ (today - w.sent_at.date()).days }} day{{ 's' if (today - w.sent_at.date()).days != 1 }} ago{% endif %}</div>
       <div class="small">{{ next_step(w) }}</div>
+      {% set said = last_word(w) %}{% if said %}<div class="small muted">Last reply: {{ said }}</div>{% endif %}
     </div>
     <div class="item-actions">
       {% if editor %}<details class="pick"><summary class="small linkish">Got it another way? Upload</summary>
