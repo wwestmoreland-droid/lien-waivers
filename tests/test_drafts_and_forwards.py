@@ -120,3 +120,27 @@ def test_not_signed_yet_button(mail):
     db.expire_all()
     assert db.get(Waiver, w.id).status == WaiverStatus.SENT and len(mail.box.sent) == sent_before
     assert not db.scalar(select(EmailMessage).where(EmailMessage.kind == "correction"))  # nothing drafted to the sub
+
+
+def test_reminders_reply_all_including_people_looped_in(mail):
+    """A sub replies on the chain and copies someone in: our follow-ups go to all of them."""
+    from datetime import date
+
+    from app.mail import reminders
+    db = mail.db
+    w, e = send_request(mail)
+    first_to, first_cc = list(e.to_addrs), list(e.cc_addrs or [])
+    _reply(mail, e, "Looping in our office manager, she handles waivers.",
+           [], cc=["office@deltafire.com", "contracts@buildoutpros.com"])
+    w = db.get(Waiver, w.id)
+    w.sent_at = w.sent_at.replace(year=2026, month=10, day=1)
+    db.commit()
+    reminders.run(db, date(2026, 10, 8))
+    r = db.scalar(select(EmailMessage).where(EmailMessage.kind == "reminder_1"))
+    everyone = set(r.to_addrs) | set(r.cc_addrs or [])
+    assert set(first_to) <= everyone and set(first_cc) <= everyone
+    assert "pm@deltafire.com" in r.to_addrs                 # the person who replied
+    assert "office@deltafire.com" in everyone               # the person they looped in
+    assert "contracts@buildoutpros.com" not in everyone     # never ourselves
+    reply = db.scalar(select(EmailMessage).where(EmailMessage.direction == "in"))
+    assert r.in_reply_to == reply.rfc_message_id and r.provider_thread_id == e.provider_thread_id

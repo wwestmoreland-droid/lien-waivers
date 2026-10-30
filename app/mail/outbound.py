@@ -244,9 +244,35 @@ def thread_root(db: Session, w: Waiver) -> EmailMessage | None:
                                                 EmailMessage.status == "sent").order_by(EmailMessage.id))
 
 
+def thread_people(db: Session, original: EmailMessage, mb: Mailbox | None) -> tuple[list[str], list[str], EmailMessage]:
+    """Reply-all for the whole thread: everyone who wrote or was copied on it, except our own
+    mailbox. Returns (to, cc, latest message) so people a sub loops in later stay on the chain."""
+    msgs = [original]
+    if original.provider_thread_id:
+        msgs = list(db.scalars(select(EmailMessage).where(
+            EmailMessage.provider_thread_id == original.provider_thread_id,
+            EmailMessage.mailbox_id == original.mailbox_id,
+            EmailMessage.status.in_(("sent", "received", "bounced"))).order_by(EmailMessage.id))) or [original]
+    ours = {a.lower() for a in (mb.email if mb else None, mb.only_to if mb else None) if a}
+    to: list[str] = list(original.to_addrs or []) if original.direction == "out" else [original.from_addr]
+    cc: list[str] = list(original.cc_addrs or []) if original.direction == "out" else []
+    for m in msgs:
+        if m.direction == "in" and m.kind != "bounce" and not m.is_auto_reply:
+            to.append(m.from_addr)       # whoever replied is written to directly
+            cc += (m.to_addrs or []) + (m.cc_addrs or [])
+        elif m.direction == "out":
+            cc += (m.cc_addrs or [])
+    to = _dedupe(to, exclude=ours)
+    cc = _dedupe(cc, exclude=list(ours) + to)
+    latest = next((m for m in reversed(msgs) if m.rfc_message_id), original)
+    return to, cc, latest
+
+
 def draft_reply(db: Session, original: EmailMessage, kind: str, values: dict | None = None, body: str | None = None,
-                actor: str = "system:mail", reply_all: bool = False, attach_waiver: bool = False) -> EmailMessage:
-    """A reply in the same thread, from the mailbox that owns the thread."""
+                actor: str = "system:mail", reply_all: bool = False, attach_waiver: bool = False,
+                everyone: bool = False) -> EmailMessage:
+    """A reply in the same thread, from the mailbox that owns the thread. everyone=True replies to
+    all on the thread (reminders and corrections), including anyone the sub copied in later."""
     w = original.waiver
     mb = original.mailbox or mailboxes.active_sender(db)
     if body is None:
@@ -255,7 +281,10 @@ def draft_reply(db: Session, original: EmailMessage, kind: str, values: dict | N
             vals["first_name"] = templates.first_name(original.from_name) or vals.get("first_name", "")
         vals.update(values or {})
         body = templates.render(db, kind_template(kind), vals).body
-    if original.direction == "in":
+    latest = original
+    if everyone:
+        to, cc, latest = thread_people(db, original, mb)
+    elif original.direction == "in":
         to = [original.from_addr]
         cc = _dedupe((original.to_addrs or []) + (original.cc_addrs or []),
                      exclude=to + ([mb.email] if mb else [])) if reply_all else []
@@ -264,11 +293,11 @@ def draft_reply(db: Session, original: EmailMessage, kind: str, values: dict | N
     subject = original.subject or ""
     if not subject.lower().startswith("re:"):
         subject = "Re: " + subject
-    refs = " ".join(x for x in (original.references, original.rfc_message_id) if x) or None
+    refs = " ".join(x for x in (latest.references, latest.rfc_message_id) if x) or None
     e = _new_email(db, kind=kind, waiver_id=original.waiver_id, project_number=original.project_number,
                    vendor_id=original.vendor_id, mailbox_id=mb.id if mb else None, to_addrs=to, cc_addrs=cc,
                    subject=subject, body_text=body, reply_to_email_id=original.id,
-                   provider_thread_id=original.provider_thread_id, in_reply_to=original.rfc_message_id,
+                   provider_thread_id=original.provider_thread_id, in_reply_to=latest.rfc_message_id,
                    references=refs, token=original.token, created_by=actor)
     if attach_waiver and w:
         _attach_waiver_pdf(db, e, w)

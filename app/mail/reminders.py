@@ -61,7 +61,7 @@ def run(db: Session, today: date | None = None) -> dict:
                 # Only the latest reminder that's due, so a long-overdue waiver doesn't get two at once.
                 if n < len(reminder_days) and age >= reminder_days[n]:
                     continue
-                e = outbound.draft_reply(db, root, kind, attach_waiver=(n == 1))
+                e = outbound.draft_reply(db, root, kind, attach_waiver=(n == 1), everyone=True)
                 outbound.maybe_auto_send(db, e)
                 stats[kind] += 1
     stats["supplier_list_reminder"] = _supplier_list_reminders(db, today, reminder_days)
@@ -93,7 +93,7 @@ def _supplier_list_reminders(db: Session, today: date, reminder_days: list[int])
         if len(due) > done and not pending:
             values = {"first_name": templates.first_name(sc.billing_name), "project_name": sc.project.name or sc.project.number,
                       "supplier_min": f"${Decimal(str(get_setting(db, 'supplier_min'))):,.0f}"}
-            e = outbound.draft_reply(db, root, "supplier_list_reminder", values=values)
+            e = outbound.draft_reply(db, root, "supplier_list_reminder", values=values, everyone=True)
             outbound.maybe_auto_send(db, e)
             n += 1
     return n
