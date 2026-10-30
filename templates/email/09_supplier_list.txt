@@ -10,7 +10,7 @@ For each one, send:
 - What they're supplying
 - Rough dollar amount
 
-You can reply with the list or fill out the attached sheet. If you don't have any suppliers over {supplier_min}, just reply and say so.
+Reply with the list in your email, or attach your own sheet. If you don't have any suppliers over {supplier_min}, just reply and say so.
 [if gate] We need this before we can process your first payment.
 
 Thanks,

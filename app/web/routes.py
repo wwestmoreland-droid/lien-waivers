@@ -467,6 +467,7 @@ def settings_page(request: Request, db: Session = Depends(get_db), user: User = 
         threshold=get_setting(db, "major_trade_threshold"),
         reviewer=get_setting(db, "default_reviewer_email"),
         statuses=get_setting(db, "picker_statuses"),
+        supplier_min=get_setting(db, "supplier_min"),
         contact_fill=get_setting(db, "smartsheet_contact_fill"),
         fills=db.scalars(select(AuditLog).where(AuditLog.action.in_(
             ("smartsheet.cells_filled", "smartsheet.billing_replaced"))).order_by(AuditLog.id.desc()).limit(25)).all(),
@@ -479,17 +480,20 @@ def settings_page(request: Request, db: Session = Depends(get_db), user: User = 
 
 
 @router.post("/settings/general")
-def save_general(interval: int = Form(...), threshold: float = Form(...), reviewer: str = Form(...),
-                 statuses: str = Form(""), db: Session = Depends(get_db), user: User = Depends(require_role("Admin"))):
+def save_general(interval: int = Form(...), reviewer: str = Form(...), threshold: float | None = Form(None),
+                 statuses: str = Form(""), supplier_min: float | None = Form(None), db: Session = Depends(get_db),
+                 user: User = Depends(require_role("Admin"))):
     if interval < 5:
         raise HTTPException(400, "Sync interval must be at least 5 minutes.")
     if interval != get_setting(db, "sync_interval_minutes"):
         set_setting(db, "sync_interval_minutes", interval, user.email)
         scheduler.reschedule(interval)
-    if threshold != get_setting(db, "major_trade_threshold"):
+    if threshold is not None and threshold != get_setting(db, "major_trade_threshold"):
         set_setting(db, "major_trade_threshold", threshold, user.email)
     if reviewer.strip().lower() != get_setting(db, "default_reviewer_email"):
         set_setting(db, "default_reviewer_email", reviewer.strip().lower(), user.email)
+    if supplier_min is not None and supplier_min != get_setting(db, "supplier_min"):
+        set_setting(db, "supplier_min", supplier_min, user.email)
     codes = sorted({int(x) for x in statuses.replace(";", ",").split(",") if x.strip().isdigit()})
     if codes and codes != sorted(get_setting(db, "picker_statuses")):
         set_setting(db, "picker_statuses", codes, user.email)

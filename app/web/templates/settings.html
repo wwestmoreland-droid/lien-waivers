@@ -14,8 +14,8 @@
   <h2 style="margin-top:0">General</h2>
   <form method="post" action="/settings/general" class="filters">
     <label>Sync every <input type="number" name="interval" min="5" value="{{ interval }}" style="width:70px" {{ 'disabled' if not admin }}> minutes</label>
-    <label>Major trade over $<input type="number" name="threshold" step="0.01" value="{{ threshold }}" style="width:110px" {{ 'disabled' if not admin }}> original contract</label>
     <label>Default reviewer <input type="email" name="reviewer" value="{{ reviewer }}" size="30" {{ 'disabled' if not admin }}></label>
+    <label>Ask for supplier lists at $<input type="number" name="supplier_min" step="1" value="{{ supplier_min }}" style="width:100px" {{ 'disabled' if not admin }}> revised contract</label>
     <label>Active project statuses <input name="statuses" value="{{ statuses|join(', ') }}" size="10" {{ 'disabled' if not admin }}
       title="INTAKE status numbers that count as active on the Jobs page, e.g. 7, 8, 9"></label>
     {% if admin %}<button class="btn primary">Save</button>{% endif %}

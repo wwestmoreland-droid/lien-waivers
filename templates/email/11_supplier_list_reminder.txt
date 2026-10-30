@@ -1,0 +1,6 @@
+Hi {first_name},
+
+We still need the list of suppliers and sub-tier contractors you're using on {project_name}: company, contact, what they supply and a rough amount. If you don't have any over {supplier_min}, just reply and say so.
+
+Thanks,
+{signature}

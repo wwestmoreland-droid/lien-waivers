@@ -133,3 +133,16 @@ details.others[open] > summary { margin-bottom: 8px; }
   .dl-form, .menu-body { left: 0; right: auto; }
   .table-wrap table { font-size: 13px; }
 }
+
+/* ---------- suppliers ---------- */
+.job-sub { display: block; }
+.job-sub-line { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+details.sups { margin-top: 4px; }
+.sups-body { margin: 6px 0 4px 14px; padding-left: 10px; border-left: 2px solid var(--line); }
+.sup { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 5px 0; }
+.sup-form { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 4px; }
+.sup-form input { width: 150px; }
+tr.sub-sups td { border-top: 0; padding-top: 0; }
+.sup-line { display: flex; gap: 4px 14px; flex-wrap: wrap; align-items: flex-start; margin-top: 2px; }
+.sup-switch { margin: 0; }
+.sup-switch input[type=checkbox] { min-height: 0; width: 18px; height: 18px; vertical-align: -4px; }

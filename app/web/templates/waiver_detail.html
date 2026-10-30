@@ -3,7 +3,8 @@
 {% block content %}
 {% set sc = w.subcontract %}{% set p = w.payable %}
 {% set editor = user.role in ('Admin', 'AP') %}
-<h1>{{ WaiverType(w.type).label }} waiver #{{ w.id }}</h1>
+<h1>{{ WaiverType(w.type).label }} waiver #{{ w.id }}{% if w.supplier_id %} from {{ w.supplier.name }}{% endif %}</h1>
+{% if w.supplier_id %}<p class="small muted">A supplier's waiver, sent in by {{ sc.vendor.name }} with their own.</p>{% endif %}
 <p class="sub"><a href="/subs/{{ sc.id }}">{{ sc.vendor.name }}</a> · <a href="/jobs/{{ sc.project.number }}">{{ sc.project.number }} {{ sc.project.name }}</a> · {{ w.state or '' }}
  · <span class="badge {{ 'bad' if w.status == 'void' }}">{{ 'cancelled' if w.status == 'void' else w.status|replace('_', ' ') }}</span></p>
 {% if msg %}<div class="warnbox">{{ msg }}</div>{% endif %}
