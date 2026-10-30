@@ -5,7 +5,7 @@ Hi {first_name},
 We paid invoice {invoice_no} for {project_name} on {paid_date} ({payment_amount}). The attached lien waiver is for the {amount} we've paid you on this job so far, through {through_date}.
 
 Please sign it, get it notarized, and reply with the signed copy.
-[if suppliers] Please also send signed lien waivers from your suppliers on this job, through the same date: {supplier_names}.
+[if supplier_prev] Please also collect signed lien waivers from your suppliers ({supplier_names}) for your previous pay application, through {supplier_prev_through}, and send them to us. We'll need them before we can release your next payment.
 [if gate] We need it back before we can release your next payment.
 
 Thanks,

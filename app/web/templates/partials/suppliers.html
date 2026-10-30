@@ -2,7 +2,7 @@
    the sub's "Track suppliers" box (partials/supplier_switch.html, next to its name) is unticked. #}
 {% set sc = r.sc %}
 <div class="sup-line">
-{% if sc.track_suppliers %}{% set sups = r.suppliers %}{% set ed = user.role in ('Admin', 'AP') %}
+{% if sc.track_suppliers and (sc.supplier_contractor or '')|trim|lower not in ('labor', 'material') %}{% set sups = r.suppliers %}{% set ed = user.role in ('Admin', 'AP') %}
 <details class="sups">
   <summary class="small linkish">Suppliers ({{ sups|length }}){% if sc.supplier_list_status == 'none' %} · none over the minimum{% elif sc.supplier_list_status == 'requested' and not sups %} · list requested{% endif %}</summary>
   <div class="sups-body">

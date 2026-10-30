@@ -51,9 +51,27 @@ def to_amount(v) -> Decimal | None:
 
 # ---------------------------------------------------------------- the list
 
+NO_SUPPLIERS = {"labor": "Labor only", "material": "Material only"}
+
+
+def excluded_reason(sc: Subcontract) -> str | None:
+    """Subs marked Labor or Material (not Labor & Material) in All Subcontracts aren't asked
+    for suppliers at all."""
+    return NO_SUPPLIERS.get((sc.supplier_contractor or "").strip().lower())
+
+
+def tracked_sql():
+    """The same rule as tracked(), for database queries."""
+    from sqlalchemy import func, or_
+    kind = func.lower(func.trim(Subcontract.supplier_contractor))
+    return Subcontract.track_suppliers.is_(True) & or_(Subcontract.supplier_contractor.is_(None),
+                                                       kind.not_in(tuple(NO_SUPPLIERS)))
+
+
 def tracked(sc: Subcontract) -> bool:
-    """Suppliers can be switched off for a sub (the checkbox under each sub)."""
-    return bool(sc.track_suppliers)
+    """Suppliers can be switched off for a sub (the checkbox under each sub), and never apply
+    to Labor-only or Material-only subs."""
+    return bool(sc.track_suppliers) and excluded_reason(sc) is None
 
 
 def active(db: Session, sc: Subcontract) -> list[Supplier]:
@@ -65,10 +83,11 @@ def active(db: Session, sc: Subcontract) -> list[Supplier]:
 
 
 def is_major_trade(db: Session, sc: Subcontract) -> bool:
-    """Revised contract at or over the supplier minimum, and not labor only."""
+    """Revised contract at or over the supplier minimum, and Labor & Material (not labor only
+    or material only)."""
     from app.ctc.engine import compute_for_subcontract
 
-    if (sc.supplier_contractor or "").strip().lower() == "labor" or sc.deleted_in_source or not tracked(sc):
+    if sc.deleted_in_source or not tracked(sc):
         return False
     return compute_for_subcontract(sc).revised_contract >= Decimal(str(get_setting(db, "supplier_min")))
 
@@ -157,7 +176,14 @@ def request_list(db: Session, sc: Subcontract, actor: str = "system:suppliers") 
 
 
 def ensure_list_requests(db: Session) -> int:
-    """Once per major-trade sub: when the job is first tracked or the sub first crosses the minimum."""
+    """Once per major-trade sub: when the job is first tracked or the sub first crosses the minimum.
+    Unsent requests to subs that are now Labor or Material only are thrown away."""
+    for e in db.scalars(select(EmailMessage).where(EmailMessage.kind.in_(("supplier_list", "supplier_list_reminder")),
+                                                   EmailMessage.status.in_(("draft", "queued", "failed")))).all():
+        ref = (e.token or "").split("-", 1)[-1]
+        sc = db.get(Subcontract, int(ref)) if ref.isdigit() else None
+        if sc is not None and excluded_reason(sc):
+            e.status = "discarded"
     n = 0
     for sc in db.scalars(select(Subcontract).join(Project).where(
             Project.is_tracked.is_(True), Subcontract.track_suppliers.is_(True), Subcontract.deleted_in_source.is_(False),
@@ -340,7 +366,7 @@ def file_supplier_waiver(db: Session, sub_waiver: Waiver, s: Supplier, att: Emai
     """A supplier's signed waiver that came in with the sub's: filed under that supplier."""
     from pathlib import Path
 
-    from app.mail.verify import compare_supplier
+    from app.mail.verify import compare_supplier, supplier_through_date
     from app.services import filestore
     from app.waivers import service as waivers
 
@@ -353,7 +379,8 @@ def file_supplier_waiver(db: Session, sub_waiver: Waiver, s: Supplier, att: Emai
     if w is None:
         w = Waiver(payable_id=sub_waiver.payable_id, subcontract_id=sub_waiver.subcontract_id, supplier_id=s.id,
                    type=wtype, state=sub_waiver.state, amount=to_amount(found.get("amount")),
-                   through_date=sub_waiver.through_date, through_date_is_fallback=sub_waiver.through_date_is_fallback,
+                   through_date=supplier_through_date(sub_waiver) or sub_waiver.through_date,
+                   through_date_is_fallback=sub_waiver.through_date_is_fallback,
                    status=WaiverStatus.SENT.value, sent_at=sub_waiver.sent_at, requested_at=sub_waiver.requested_at,
                    reviewer_email=sub_waiver.reviewer_email)
         db.add(w)
@@ -396,6 +423,8 @@ def set_tracking(db: Session, sc: Subcontract, on: bool, actor: str) -> int:
     supplier-list emails and closes its supplier questions; nothing already entered is deleted."""
     from app.db.models import ReviewItem
 
+    if on and excluded_reason(sc):
+        raise ValueError(f"{sc.vendor.name} is {excluded_reason(sc)} in All Subcontracts, so suppliers aren't tracked.")
     sc.track_suppliers = on
     audit(db, actor, "subcontract.suppliers_on" if on else "subcontract.suppliers_off", "subcontract", sc.id,
           vendor=sc.vendor.name, project=sc.project.number)

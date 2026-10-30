@@ -95,7 +95,10 @@ def sub_supplier_tracking(sc_id: int, on: str = Form(""), back: str = Form(""), 
                           user: User = Depends(editor)):
     """The 'Track suppliers' checkbox under each sub."""
     sc = _sub(db, sc_id)
-    dropped = service.set_tracking(db, sc, on == "1", user.email)
+    try:
+        dropped = service.set_tracking(db, sc, on == "1", user.email)
+    except ValueError as exc:
+        return _go(back, sc, str(exc))
     db.commit()
     if on == "1":
         msg = f"Tracking suppliers for {sc.vendor.name} again."
