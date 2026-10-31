@@ -168,12 +168,9 @@ def facts(db: Session, w: Waiver, e: EmailMessage | None = None) -> str:
                   key=lambda x: (x.date_received or x.paid_date or w.created_at.date(), x.id))
     if pays:
         out += ["", "Their invoices on this job (oldest first):"]
-        running = 0
         for x in pays[-25:]:
-            if x.paid_date and x.amount is not None:
-                running += x.amount
             out.append(f"- Invoice {x.invoice_no or '(no number)'}: {_m(x.amount)}, received {_d(x.date_received)}, "
-                       (f"billed through {_d(x.billed_through_date)}, " if x.billed_through_date else "")
+                       + (f"billed through {_d(x.billed_through_date)}, " if x.billed_through_date else "")
                        + (f"paid {_d(x.paid_date)}" if x.paid_date else "not paid yet")
                        + (" (retention)" if x.is_retention_override or x.is_retention_auto else ""))
         if p.paid_date:
