@@ -34,6 +34,7 @@ KIND_LABELS = {
     "supplier_list": "Supplier list request",
     "supplier_list_reminder": "Supplier list reminder",
     "cancelled": "Waiver cancelled",
+    "answer": "Suggested answer",
     "free": "Email",
     "inbound": "Received email",
 }

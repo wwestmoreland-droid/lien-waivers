@@ -116,11 +116,15 @@ def handle(db: Session, w: Waiver, e: EmailMessage, sender_vendor_id: int | None
         if files:
             ask(db, "copy_for_cancelled", e, w, f"{name} sent a signed copy for waiver #{w.id}, which was cancelled. "
                                                 f"Open it to restore the waiver or file it elsewhere.")
+        elif words.strip() and not readonly:
+            _respond(db, w, e, words, sender_vendor_id, name)
         return
     if w.status == WaiverStatus.ACCEPTED:
         if files:
             ask(db, "copy_after_accepted", e, w, f"{name} sent another signed copy for waiver #{w.id}, which is already "
                                                  "accepted. Is it for a different waiver?")
+        elif words.strip() and not readonly:
+            _respond(db, w, e, words, sender_vendor_id, name)
         return
     if sender_vendor_id and sender_vendor_id != w.subcontract.vendor_id and files:
         ask(db, "other_company", e, w, f"A file from {e.from_addr} came in on {name}'s waiver #{w.id}, but that address "
@@ -136,8 +140,10 @@ def handle(db: Session, w: Waiver, e: EmailMessage, sender_vendor_id: int | None
         if came_back:
             said = unsigned.reason_from_words(words)
             unsigned.note_reply(db, w, e, "They sent back our own unsigned copy." + (f" {said}" if said else ""))
+            _respond(db, w, e, words, sender_vendor_id, name, noted=True)
         elif unsigned.NOT_SIGNED.search(words):
             unsigned.note_reply(db, w, e, unsigned.reason_from_words(words) or "They replied without a signed copy.")
+            _respond(db, w, e, words, sender_vendor_id, name, noted=True)
         elif LINKS.search(words):
             ask(db, "signed_by_link", e, w, f"{name} sent a link instead of a file for waiver #{w.id} "
                                             "(DocuSign, Drive or similar). Open it and save the signed copy.")
@@ -149,8 +155,8 @@ def handle(db: Session, w: Waiver, e: EmailMessage, sender_vendor_id: int | None
             ask(db, "nothing_attached", e, w, f"{name} says it's attached, but nothing came with their email for "
                                               f"waiver #{w.id}. Ask them to resend.")
         elif words.strip():
-            snippet = words.strip()[:160]
-            ask(db, "sub_replied", e, w, f'{name} replied about waiver #{w.id}: "{snippet}"')
+            if not _respond(db, w, e, words, sender_vendor_id, name):
+                ask(db, "sub_replied", e, w, f'{name} replied about waiver #{w.id}: "{words.strip()[:160]}"')
         return
 
     if same_as_sent_back(db, w, files):
@@ -170,6 +176,23 @@ def handle(db: Session, w: Waiver, e: EmailMessage, sender_vendor_id: int | None
     if extra and not _supplier_tracked(db, w):
         ask(db, "extra_files", e, w, f"{name}'s email had {len(files)} signed files; one was filed to waiver #{w.id}. "
                                      f"Open it to file {', '.join(a.filename for a in extra[:3])}.")
+
+
+def _respond(db: Session, w: Waiver, e: EmailMessage, words: str, sender_vendor_id: int | None, name: str,
+             noted: bool = False) -> bool:
+    """A reply without a signed copy: draft our answer, wait quietly, or (returns False) leave it
+    to a person. Replies from a different company are always left to a person."""
+    from app.mail import answer
+    if sender_vendor_id and sender_vendor_id != w.subcontract.vendor_id:
+        return False
+    d = answer.respond(db, w, e, words, noted=noted)
+    if d is None:
+        return False
+    if d.action == "check_first":
+        ask(db, "sub_replied", e, w, f'{name} asked about waiver #{w.id}: "{words.strip()[:160]}" '
+                                     f"Check first: {d.check or 'confirm the facts in the reply'} "
+                                     "A suggested reply is waiting in Ready to send.")
+    return True
 
 
 def _filed_ids(db: Session, w: Waiver, e: EmailMessage) -> set[int]:
