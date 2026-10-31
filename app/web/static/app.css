@@ -162,3 +162,8 @@ tr.sub-sups td { border-top: 0; padding-top: 0; }
 @media (max-width: 640px) { .sc-waiver { text-align: left; } }
 .sel-bar { margin: 2px 0 6px; }
 .pick-draft { width: 20px; height: 20px; margin-top: 2px; flex: none; }
+
+/* Suggested answers in Ready to send: show their question and our draft right on the row */
+.answer-q { margin-top: .35rem; }
+.answer-body { white-space: pre-wrap; margin-top: .35rem; padding: .5rem .65rem; border-left: 3px solid #c9d3e0;
+               background: #f7f9fb; font-size: .9rem; max-width: 46rem; }
