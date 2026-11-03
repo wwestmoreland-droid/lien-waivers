@@ -173,7 +173,7 @@ def facts(db: Session, w: Waiver, e: EmailMessage | None = None) -> str:
                        + (f"billed through {_d(x.billed_through_date)}, " if x.billed_through_date else "")
                        + (f"paid {_d(x.paid_date)}" if x.paid_date else "not paid yet")
                        + (" (retention)" if x.is_retention_override or x.is_retention_auto else ""))
-        if p.paid_date:
+        if p.paid_date and not p.is_manual:
             out.append(f"- Paid to them through invoice {p.invoice_no or '(this one)'}: "
                        f"{_m(waivers.paid_through(sc, p))}")
 

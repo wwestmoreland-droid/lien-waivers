@@ -4,7 +4,7 @@ from __future__ import annotations
 import threading
 from datetime import date, datetime, timezone
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
@@ -206,6 +206,63 @@ def job_detail(request: Request, number: str, db: Session = Depends(get_db), use
     return render(request, "job_detail.html", user, p=p, rows=rows, unmatched=unmatched, direct=direct, subs=subs,
                   msg=request.query_params.get("msg", ""),
                   totals={f: sum((getattr(r, f) for r in rows), report.ZERO) for f in report.MONEY_FIELDS})
+
+
+@router.post("/subs/{sc_id}/manual-waiver")
+async def manual_waiver(sc_id: int, wtype: str = Form(...), amount: str = Form(...), through_date: str = Form(...),
+                        invoice_no: str = Form(""), payment_amount: str = Form(""), paid_date: str = Form(""),
+                        note: str = Form(""), back: str = Form(""), file: UploadFile | None = File(None),
+                        db: Session = Depends(get_db), user: User = Depends(require_role(*EDITORS))):
+    """'Add a waiver by hand' next to a sub: for something Smartsheet doesn't have. Without a file
+    its request email goes to Ready to send; with a signed file it goes to Signed copies back."""
+    from datetime import date as date_
+    from decimal import Decimal, InvalidOperation
+
+    from app.waivers.types import WaiverType
+
+    sc = db.get(Subcontract, sc_id)
+    if not sc:
+        raise HTTPException(404)
+    default = f"/jobs/{sc.project.number}"
+
+    def money(v: str) -> Decimal | None:
+        v = (v or "").replace("$", "").replace(",", "").strip()
+        try:
+            return Decimal(v).quantize(Decimal("0.01")) if v else None
+        except InvalidOperation:
+            raise ValueError(f'"{v}" isn\'t an amount.')
+
+    def day(v: str) -> date_ | None:
+        try:
+            return date_.fromisoformat(v) if v else None
+        except ValueError:
+            raise ValueError(f'"{v}" isn\'t a date.')
+
+    content = await file.read() if file is not None and file.filename else b""
+    try:
+        w = waiver_service.create_manual_waiver(
+            db, sc, WaiverType(wtype), money(amount), day(through_date), user.email, invoice_no=invoice_no,
+            paid_date=day(paid_date), note=note, payment_amount=money(payment_amount))
+        if content:
+            from app.db.models import EmailMessage
+            from app.mail import outbound
+            waiver_service.mark_received(db, w, user.email, file.filename, content)
+            db.flush()
+            # Already signed: the request email isn't needed.
+            outbound.delete_drafts(db, list(db.scalars(select(EmailMessage.id).where(
+                EmailMessage.waiver_id == w.id, EmailMessage.kind == "waiver_request"))), user.email)
+    except ValueError as exc:
+        db.rollback()
+        return RedirectResponse(with_msg(safe_back(back, default), str(exc)), status_code=303)
+    db.commit()
+    label = f"{WaiverType(w.type).label} for {sc.vendor.name} ({w.amount:,.2f})"
+    if content:
+        msg = f"{label} is filed with its signed copy, under Signed copies back on Today."
+    elif w.status == "needs_review":
+        msg = f"{label} was added but is blocked: {w.review_reason}"
+    else:
+        msg = f"{label} was added. Its email is in Ready to send on Today; read it before sending."
+    return RedirectResponse(with_msg(safe_back(back, default), msg), status_code=303)
 
 
 @router.post("/subs/{sc_id}/unconditional-final")

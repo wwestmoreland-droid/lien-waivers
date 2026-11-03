@@ -291,6 +291,11 @@ class Payable(Base):
     def through_date_is_fallback(self) -> bool:
         return self.billed_through_date is None
 
+    @property
+    def is_manual(self) -> bool:
+        """A stand-in for a waiver entered by hand (not a Smartsheet row; see create_manual_waiver)."""
+        return (self.source_row_id or 0) < 0
+
 
 class PayableEvent(Base):
     """State transitions found during sync. Waiver triggers (Phase 2) read these.
