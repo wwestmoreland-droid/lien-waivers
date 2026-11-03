@@ -228,14 +228,47 @@ def not_signed(wid: int, back: str = Form(""), db: Session = Depends(get_db),
 
 
 @router.post("/waivers/{wid}/void")
-def void(wid: int, reason: str = Form(...), notify: str = Form(""), db: Session = Depends(get_db),
-         user: User = Depends(require_role(*EDITORS))):
+def void(wid: int, reason: str = Form(...), notify: str = Form(""), back: str = Form(""),
+         db: Session = Depends(get_db), user: User = Depends(require_role(*EDITORS))):
     w = _waiver(db, wid)
     note = service.void(db, w, user.email, reason, notify_sub=notify == "yes")
     db.commit()
     if note is not None:
         return RedirectResponse(f"/email/{note.id}/edit", status_code=303)
+    if back:
+        return RedirectResponse(with_msg(safe_back(back, f"/waivers/{w.id}"),
+                                         f"Cancelled {w.subcontract.vendor.name}'s waiver. No email will go out."),
+                                status_code=303)
     return _back(w, "Cancelled.")
+
+
+@router.post("/waivers/{wid}/send-to")
+def send_to(wid: int, email: str = Form(...), back: str = Form(""), db: Session = Depends(get_db),
+            user: User = Depends(require_role(*EDITORS))):
+    """'Add an email' on a waiver that had no recipient: waivers for this sub go there from now
+    on, and its unsent emails are addressed to it."""
+    import re
+
+    from app.contacts import service as contacts
+    from app.db.models import EmailMessage
+
+    w = _waiver(db, wid)
+    addr = email.strip().lower()
+    if not re.fullmatch(r"[\w.+-]+@[\w-]+(\.[\w-]+)+", addr):
+        return RedirectResponse(with_msg(safe_back(back, f"/waivers/{w.id}"), f'"{email}" isn\'t an email address.'),
+                                status_code=303)
+    contacts.set_waiver_email(db, w.subcontract.vendor, addr, user.email)
+    for e in db.scalars(select(EmailMessage).where(EmailMessage.vendor_id == w.subcontract.vendor_id,
+                                                   EmailMessage.direction == "out",
+                                                   EmailMessage.status.in_(("draft", "queued", "failed")))):
+        if not e.to_addrs:
+            e.to_addrs = [addr]
+            if e.error and "No billing or PM email" in e.error:
+                e.error = None
+    db.commit()
+    return RedirectResponse(with_msg(safe_back(back, f"/waivers/{w.id}"),
+                                     f"Waivers for {w.subcontract.vendor.name} go to {addr} now. It's ready to send."),
+                            status_code=303)
 
 
 @router.post("/waivers/{wid}/restore")

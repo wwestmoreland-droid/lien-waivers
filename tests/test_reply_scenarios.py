@@ -364,3 +364,34 @@ def test_sub_cant_be_its_own_supplier(mail):
     delta = db.scalar(select(Subcontract).where(Subcontract.source_row_id == 101))
     with pytest.raises(ValueError):
         suppliers.add(db, delta, "ap", "Delta Fire Systems, Inc")
+
+
+def test_not_signed_yet_sticks_across_syncs(mail):
+    """A file that isn't a waiver was filed; a person clicks Not signed yet. The safety net that
+    files late replies must not put it back on the next sync."""
+    db = mail.db
+    w, e = send_request(mail)
+    reply(mail, e, body="Here is our W-9", attachments=[InAttachment("w9.pdf", "application/pdf", PDF + b"w9")])
+    assert W(db, w).status == WaiverStatus.RECEIVED
+    waivers.undo_received(db, W(db, w), "ap", "That's a W-9, not a waiver")
+    db.commit()
+    for _ in range(2):
+        inbound.file_waiting_replies(db)
+        inbound.recheck_received(db)
+        db.commit()
+        assert W(db, w).status == WaiverStatus.SENT
+
+
+def test_old_not_signed_yet_clicks_stick_too(mail):
+    """Clicked before this fix (so the email has no 'not filed' mark): still not re-filed."""
+    from app.db.models import EmailEvent
+    db = mail.db
+    w, e = send_request(mail)
+    reply(mail, e, body="Our W-9", attachments=[InAttachment("w9.pdf", "application/pdf", PDF + b"w9")])
+    waivers.undo_received(db, W(db, w), "ap", "not a waiver")
+    for ev in db.scalars(select(EmailEvent).where(EmailEvent.action == "not_filed")):
+        db.delete(ev)
+    db.commit()
+    inbound.file_waiting_replies(db)
+    db.commit()
+    assert W(db, w).status == WaiverStatus.SENT

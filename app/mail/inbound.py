@@ -228,6 +228,8 @@ def file_waiting_replies(db: Session, days: int = 45) -> int:
         from app.mail import unsigned
         if unsigned.was_held(db, e):
             continue  # the sub said it isn't signed yet (or sent our own copy back)
+        if _marked_not_signed_after(db, w, e):
+            continue  # a person (or the recheck) already said what came in isn't the signed copy
         if db.scalar(select(ReviewItem.id).where(ReviewItem.ref_type == "email", ReviewItem.ref_id == e.id).limit(1)):
             continue  # the app already asked a person about this email
         reason = unsigned.reason_not_signed(db, w, e)
@@ -239,6 +241,14 @@ def file_waiting_replies(db: Session, days: int = 45) -> int:
                 outbound.log_email(db, e, "system:mail", "filed_as_signed_copy", waiver_id=w.id)
                 filed += 1
     return filed
+
+
+def _marked_not_signed_after(db: Session, w: Waiver, e: EmailMessage) -> bool:
+    """'Not signed yet' was clicked on this waiver after this email came in."""
+    from app.db.models import WaiverEvent
+    q = select(WaiverEvent.at).where(WaiverEvent.waiver_id == w.id, WaiverEvent.action == "not_signed")
+    got = _aware(e.received_at) if e.received_at else None
+    return any(got is None or _aware(at) >= got for at in db.scalars(q))
 
 
 def _aware(d: datetime) -> datetime:
