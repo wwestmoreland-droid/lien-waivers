@@ -321,11 +321,20 @@ def undo_received(db: Session, w: Waiver, actor: str, note: str) -> None:
     """It wasn't a signed copy after all: back to waiting on the sub. No email is drafted."""
     if w.status != WaiverStatus.RECEIVED:
         raise ValueError("Only a waiver that came back can be put back to waiting.")
+    email_id = (w.verification or {}).get("email_id")
     log_event(db, w, actor, "not_signed", WaiverStatus.SENT.value, note=note, file=w.signed_pdf_path)
     w.signed_pdf_path = None
     w.received_at = None
     w.verification = None
     audit(db, actor, "waiver.not_signed", "waiver", w.id, note=note)
+    # Their email may have said something worth answering (it was read as a signed copy instead).
+    from app.db.models import EmailMessage
+    e = db.get(EmailMessage, email_id) if email_id else None
+    if e is not None and e.direction == "in":
+        from app.mail import replies
+        words = replies.own_words(e)
+        if words.strip():
+            replies._respond(db, w, e, words, e.vendor_id, w.subcontract.vendor.name)
 
 
 def accept(db: Session, w: Waiver, actor: str, note: str = "") -> None:

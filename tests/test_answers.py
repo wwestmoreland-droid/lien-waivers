@@ -183,3 +183,91 @@ def test_today_shows_the_question_and_draft_without_send_all(mail, claude):
     assert r.status_code == 200
     assert "Suggested answer" in r.text and "They wrote:" in r.text and "corrected waiver" in r.text
     assert "Send all" not in r.text
+
+
+# ---------------------------------------------------------------- signature pictures aren't signed copies
+
+RUTH = ("I am showing that we have only received $12,554.50. If you calculate only the 8967.50 and the new yet "
+        "to be received payment of $5,380.50, the total is $14,348.00. However, your payment to us for $3,587.00 "
+        "is not accounted for. Let me know what you want to do.")
+
+
+def test_outlook_signature_pictures_arent_filed_and_the_question_is_answered(mail, claude):
+    """A real case: a reply disputing the amount, with two pasted signature pictures both named
+    image.png (big enough in bytes to pass the old size check)."""
+    from app.mail.provider import InAttachment
+    from tests.test_reply_scenarios import photo
+    db = mail.db
+    w, e = send_request(mail)
+    logos = [InAttachment("image.png", "image/png", photo((560, 160), "PNG")),
+             InAttachment("image.png", "image/png", photo((1400, 300), "PNG"))]
+    assert all(len(a.data) > 15_000 for a in logos)
+    reply(mail, e, body=RUTH, attachments=logos)
+    assert W(db, w).status == WaiverStatus.SENT
+    assert len(answers(db)) == 1
+
+
+def test_pictures_the_check_says_arent_a_waiver_arent_filed(mail, claude, monkeypatch):
+    from app.mail import verify
+    from app.mail.provider import InAttachment
+    from tests.test_reply_scenarios import photo
+    monkeypatch.setattr(verify, "verify", lambda w, a, client=None: {"status": "issues", "found": {
+        "is_lien_waiver": False, "appears_signed": False}})
+    db = mail.db
+    w, e = send_request(mail)
+    reply(mail, e, body=RUTH, attachments=[InAttachment("IMG_2231.jpg", "image/jpeg", photo())])
+    assert W(db, w).status == WaiverStatus.SENT and len(answers(db)) == 1
+
+
+def test_a_photo_of_the_signed_page_is_still_filed(mail, claude):
+    from app.mail.provider import InAttachment
+    from tests.test_reply_scenarios import photo
+    db = mail.db
+    w, e = send_request(mail)
+    reply(mail, e, body="Signed copy attached", attachments=[InAttachment("image.jpeg", "image/jpeg", photo())])
+    assert W(db, w).status == WaiverStatus.RECEIVED and answers(db) == []
+
+
+def test_not_signed_yet_reads_their_email_again(mail, claude, monkeypatch):
+    """Filed by mistake, then a person clicks Not signed yet: the reply gets answered."""
+    from app.mail import answer as answer_mod
+    from app.mail.provider import InAttachment
+    from app.waivers import service as waivers
+    from tests.test_reply_scenarios import photo
+    db = mail.db
+    w, e = send_request(mail)
+    monkeypatch.setattr(answer_mod, "get_client", lambda: None)  # nothing to ask yet
+    reply(mail, e, body="Why is this only $14,348? See attached.", attachments=[
+        InAttachment("scan.jpg", "image/jpeg", photo())])
+    assert W(db, w).status == WaiverStatus.RECEIVED
+    monkeypatch.setattr(answer_mod, "get_client", lambda: claude)
+    waivers.undo_received(db, W(db, w), "ap", "That was a screenshot")
+    db.commit()
+    assert W(db, w).status == WaiverStatus.SENT and len(answers(db)) == 1
+
+
+def test_draft_a_reply_button(mail, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from app.db.models import ReviewItem
+    from app.main import create_app
+    from app.mail import answer as answer_mod
+    db = mail.db
+    w, e = send_request(mail)
+    monkeypatch.setattr(answer_mod, "get_client", lambda: None)  # came in before drafting existed
+    reply(mail, e, body=RUTH)
+    q = asked(db, "sub_replied")
+    assert q is not None and answers(db) == []
+    fake = FakeClaude(action="wait")  # the button always gets a reply, never "wait"
+    monkeypatch.setattr(answer_mod, "get_client", lambda: fake)
+    with TestClient(create_app()) as c:
+        assert "Draft a reply" in c.get("/").text
+        fake.out = {"action": "check_first", "summary": "", "check": "Find the $3,587 payment.",
+                    "reply": "We'll check our records for the $3,587.00 payment and send a corrected waiver if needed."}
+        r = c.post(f"/queues/review/{q.id}/draft-reply", follow_redirects=False)
+    assert r.status_code == 303 and "Ready to send" in r.headers["location"].replace("%20", " ")
+    assert "don't choose wait" in fake.prompts[-1]
+    [a] = answers(db)
+    assert "$3,587.00" in a.body_text
+    db.expire_all()
+    assert db.get(ReviewItem, q.id).status == "resolved"
