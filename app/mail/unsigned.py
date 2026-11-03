@@ -63,12 +63,14 @@ def hold_reason(db: Session, w: Waiver, e: EmailMessage, files: list, words: str
 
 def reason_not_signed(db: Session, w: Waiver, e: EmailMessage) -> str | None:
     """Why this reply shouldn't be filed as the signed copy, or None if it looks like one."""
-    from app.mail.replies import candidates
+    from app.mail.replies import candidates, not_a_waiver
     if not [a for a in e.attachments if a.is_pdf or a.is_image]:
         return None
     files, _, came_back = candidates(db, w, e)
     if not files:
         return "They sent back our own unsigned copy." if came_back else None
+    if not_a_waiver(db, w, files):
+        return "The pictures in their email aren't a lien waiver."
     return hold_reason(db, w, e, files, own_words(e))
 
 

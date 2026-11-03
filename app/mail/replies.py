@@ -32,6 +32,20 @@ SAYS_ATTACHED = re.compile(r"\b(attached|attaching|see attachment|enclosed|here 
 UNREADABLE = (".doc", ".docx", ".zip", ".rar", ".7z", ".xls", ".xlsx", ".pages", ".odt", ".heic", ".heif")
 
 
+def looks_like_logo(data: bytes) -> bool:
+    """An email-signature picture rather than a photo of a signed page: small, or a wide strip.
+    Outlook names pasted signature pictures plain "image.png", so the name alone can't tell."""
+    try:
+        import io
+
+        from PIL import Image
+        with Image.open(io.BytesIO(data)) as im:
+            w, h = im.size
+    except Exception:
+        return False
+    return max(w, h) < 600 or w > 3 * h or h > 3 * w
+
+
 def digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
@@ -57,7 +71,7 @@ def candidates(db: Session, w: Waiver | None, e: EmailMessage) -> tuple[list[Ema
             continue
         if not data or (len(data) < TINY_FILE and not is_pdf_bytes(data)):
             continue  # empty or broken
-        if image and (LOGO.match(name) or len(data) < SMALL_IMAGE):
+        if image and (LOGO.match(name) or len(data) < SMALL_IMAGE or looks_like_logo(data)):
             continue  # email-signature logo
         h = digest(data)
         if h in ours:
@@ -111,6 +125,8 @@ def handle(db: Session, w: Waiver, e: EmailMessage, sender_vendor_id: int | None
     name = w.subcontract.vendor.name
     files, unreadable, came_back = candidates(db, w, e)
     words = own_words(e)
+    if files and not readonly and not_a_waiver(db, w, files):
+        files = []  # only pictures, and none of them is a lien waiver: read it as a text reply
 
     if w.status == WaiverStatus.VOID:
         if files:
@@ -176,6 +192,20 @@ def handle(db: Session, w: Waiver, e: EmailMessage, sender_vendor_id: int | None
     if extra and not _supplier_tracked(db, w):
         ask(db, "extra_files", e, w, f"{name}'s email had {len(files)} signed files; one was filed to waiver #{w.id}. "
                                      f"Open it to file {', '.join(a.filename for a in extra[:3])}.")
+
+
+def not_a_waiver(db: Session, w: Waiver, files: list[EmailAttachment]) -> bool:
+    """Every file is a picture and the automatic check says none is a lien waiver. PDFs are
+    never second-guessed here, and without the check (no key, or it failed) nothing changes."""
+    from app.mail import verify
+    if any(a.is_pdf or (a.content_type or "") == "application/pdf" for a in files):
+        return False
+    for a in files:
+        filestore.ensure(db, a.path)
+        found = verify.verify(w, a).get("found")
+        if not found or found.get("is_lien_waiver"):
+            return False
+    return True
 
 
 def _respond(db: Session, w: Waiver, e: EmailMessage, words: str, sender_vendor_id: int | None, name: str,

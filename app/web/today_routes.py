@@ -107,6 +107,33 @@ def review_to_pm(rid: int, db: Session = Depends(get_db), user: User = Depends(r
     return RedirectResponse("/?msg=" + quote(f"Sent to {project.pm_name or project.pm_email}."), status_code=303)
 
 
+REPLY_KINDS = ("sub_replied", "nothing_attached", "signed_by_link", "unreadable_file", "waiver_forwarded")
+
+
+@router.post("/queues/review/{rid}/draft-reply")
+def draft_reply(rid: int, db: Session = Depends(get_db), user: User = Depends(require_role(*EDITORS))):
+    """'Draft a reply' on a sub's reply: Claude writes a suggested answer into Ready to send."""
+    from app.db.models import EmailMessage
+    from app.mail import answer, replies
+
+    item = db.get(ReviewItem, rid)
+    e = db.get(EmailMessage, item.ref_id) if item and item.ref_type == "email" else None
+    if e is None or e.waiver is None:
+        raise HTTPException(404)
+    if answer.already_drafted(db, e):
+        return RedirectResponse("/?msg=" + quote("A suggested reply is already in Ready to send.") + "#send",
+                                status_code=303)
+    d = answer.respond(db, e.waiver, e, replies.own_words(e), noted=True, must_reply=True)
+    if d is None:
+        db.rollback()
+        return RedirectResponse("/?msg=" + quote("Couldn't write a reply automatically (check the Anthropic key on "
+                                                 "More, Settings). Open the email to reply yourself."), status_code=303)
+    item.status, item.resolved_by = "resolved", user.email
+    db.commit()
+    return RedirectResponse("/?msg=" + quote("A suggested reply is in Ready to send. Read it before sending.")
+                            + "#send", status_code=303)
+
+
 @router.post("/queues/review/{rid}/use-forward")
 def use_forward(rid: int, db: Session = Depends(get_db), user: User = Depends(require_role(*EDITORS))):
     """'Yes' on "X sent the waiver on to billing@...": waivers for that sub go there from now on."""

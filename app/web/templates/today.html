@@ -129,6 +129,7 @@
           <button class="btn primary">Yes, retention</button></form>
         <form method="post" action="/queues/review/{{ o.id }}/to-pm"><button class="btn">No, send to PM</button></form>
       {% elif q.kind == 'review' %}
+        {% if o.kind in REPLY_KINDS and o.ref_type == 'email' %}<form method="post" action="/queues/review/{{ o.id }}/draft-reply"><button class="btn primary">Draft a reply</button></form>{% endif %}
         <a class="btn" href="{{ q.more_url }}">Open</a>
         <form method="post" action="/queues/review/{{ o.id }}/resolve"><input type="hidden" name="back" value="{{ back }}"><button class="btn">Resolved</button></form>
       {% elif q.kind == 'contact' %}

@@ -105,5 +105,5 @@ def _kind_labels():
 
 from app.waivers.types import WaiverType  # noqa: E402
 
-templates.env.globals.update(static_version=_static_version, mail_banner=_mail_banner, outbox_count=_outbox_count, today_count=_today_count, KIND_LABELS=_kind_labels(),
+templates.env.globals.update(REPLY_KINDS=("sub_replied", "nothing_attached", "signed_by_link", "unreadable_file", "waiver_forwarded"), static_version=_static_version, mail_banner=_mail_banner, outbox_count=_outbox_count, today_count=_today_count, KIND_LABELS=_kind_labels(),
                              WaiverType=WaiverType)
