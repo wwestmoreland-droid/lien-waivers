@@ -19,12 +19,17 @@
 </div>
 
 <details class="others" {{ 'open' if show_untracked }}>
+  {% if q %}
+  <summary>{{ others|length }} untracked job{{ 's' if others|length != 1 }} match{{ 'es' if others|length == 1 }} "{{ q }}".</summary>
+  <p class="small muted">Search covers every job in INTAKE and Archived, whatever its status.</p>
+  {% else %}
   <summary>{{ others|length }} other active project{{ 's' if others|length != 1 }} {{ "aren't" if others|length != 1 else "isn't" }} tracked.</summary>
-  <p class="small muted">Active means INTAKE status {{ statuses_label }}. Change which statuses count on <a href="/settings">Settings</a>.</p>
+  <p class="small muted">Active means INTAKE status {{ statuses_label }}. To track a job at another status, search for it above. Change which statuses count on <a href="/settings">Settings</a>.</p>
+  {% endif %}
   <div class="table-wrap"><table>
     <tr><th>Project #</th><th>Name</th><th>Client</th><th>State</th><th>Status</th><th>PM</th><th class="n"># subs</th><th class="n">Subcontract value</th><th>Tracking</th></tr>
     {% for p in others %}{% include "partials/project_row.html" %}{% else %}
-    <tr><td colspan="9" class="muted">Nothing else is active.</td></tr>{% endfor %}
+    <tr><td colspan="9" class="muted">{{ 'No untracked jobs match.' if q else 'Nothing else is active.' }}</td></tr>{% endfor %}
   </table></div>
 </details>
 {% endblock %}
