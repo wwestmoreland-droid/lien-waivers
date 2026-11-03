@@ -46,6 +46,7 @@ include = ["app*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+markers = ["monthly_partials: run with partial waivers held for the monthly send"]
 
 [tool.setuptools.package-data]
 app = ["web/static/*", "web/templates/*.html", "web/templates/partials/*.html", "smartsheet/*.yaml"]

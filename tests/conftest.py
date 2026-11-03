@@ -55,3 +55,14 @@ def _no_real_smartsheet_writes():
     sync_runner.set_writer_factory(lambda: Off())
     yield
     sync_runner.set_writer_factory(None)
+
+
+@pytest.fixture(autouse=True)
+def _partials_per_payment(request, monkeypatch):
+    """Most tests were written for one partial per paid invoice; monthly tests opt in with
+    @pytest.mark.monthly_partials."""
+    if request.node.get_closest_marker("monthly_partials"):
+        return
+    from app.services import settings_store
+    real = settings_store.defaults
+    monkeypatch.setattr(settings_store, "defaults", lambda: real() | {"partial_schedule": "each_payment"})

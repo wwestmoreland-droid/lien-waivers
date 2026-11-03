@@ -15,6 +15,14 @@
     {% if ready|length > 1 %}<form method="post" action="/today/send-all"><button class="btn primary">Send all {{ ready|length }}</button></form>{% endif %}
   </div>
   <p class="sec-note">Waiver requests and follow-ups the app has written. Look one over if you like, then send.</p>
+  {% if held %}{% set subs_held = held|map(attribute='subcontract_id')|unique|list %}
+  <div class="item held-note">
+    <div class="item-main small">{{ held|length }} partial waiver{{ 's' if held|length != 1 }} for {{ subs_held|length }} sub{{ 's' if subs_held|length != 1 }}
+      {{ 'are' if held|length != 1 else 'is' }} held for the monthly send on {{ next_send.strftime('%b') }} {{ next_send.day }}. Each sub gets one, for everything paid so far.
+      {% set names = held|map(attribute='subcontract.vendor.name')|unique|list %}<span class="muted">({{ names[:4]|join(', ') }}{{ '…' if names|length > 4 }})</span></div>
+    <div class="item-actions"><form method="post" action="/today/release-partials"><button class="btn">Send them now</button></form></div>
+  </div>
+  {% endif %}
   {% if to_send %}
   <form id="del-form" method="post" action="/today/delete-drafts" onsubmit="return confirm('Delete the selected drafts? A waiver request also cancels its waiver (Restore on the waiver brings it back).')">
     <input type="hidden" name="back" value="/">
