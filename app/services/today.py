@@ -61,10 +61,16 @@ class ToSend:
     note: str = ""
     problem: str = ""   # why it can't go out; shown instead of Send
     fix_url: str = ""
+    question: str = ""  # for a suggested answer: what the sub wrote
 
     @property
     def sendable(self) -> bool:
         return not self.problem
+
+    @property
+    def in_send_all(self) -> bool:
+        """Suggested answers are read and sent one at a time, never with Send all."""
+        return self.sendable and self.email.kind != "answer"
 
 
 def ready_to_send(db: Session) -> list[ToSend]:
@@ -92,6 +98,12 @@ def ready_to_send(db: Session) -> list[ToSend]:
             if w.through_date_is_fallback and not WaiverType(w.type).is_final and e.kind == "waiver_request":
                 notes.append("Through date is a fallback, check it")
         item.note = " · ".join(notes)
+        if e.kind == "answer":
+            asked = db.get(EmailMessage, e.reply_to_email_id) if e.reply_to_email_id else None
+            if asked is not None:
+                from app.mail.unsigned import own_words
+                item.question = (own_words(asked) or "").strip()[:600]
+            item.note = "Written by the app from the waiver's facts. Read it, edit if needed, then send."
         if not e.to_addrs:
             item.problem = "No email address for this sub."
             item.fix_url = f"/subs/{w.subcontract_id}" if w else f"/email/{e.id}/edit"

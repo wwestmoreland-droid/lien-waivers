@@ -11,7 +11,7 @@
 <section class="today" id="send">
   <div class="sec-head">
     <h2>Ready to send <span class="count">{{ to_send|length }}</span></h2>
-    {% set ready = to_send|selectattr('sendable')|list %}
+    {% set ready = to_send|selectattr('in_send_all')|list %}
     {% if ready|length > 1 %}<form method="post" action="/today/send-all"><button class="btn primary">Send all {{ ready|length }}</button></form>{% endif %}
   </div>
   <p class="sec-note">Waiver requests and follow-ups the app has written. Look one over if you like, then send.</p>
@@ -33,6 +33,10 @@
       {% else %}<div><strong>{{ (e.to_addrs or ['(no recipient)'])|join(', ') }}</strong> <span class="pill">{{ KIND_LABELS.get(e.kind, 'Email') }}</span></div>
         <div class="small muted">{{ e.subject or '' }}</div>{% endif %}
       {% if t.note %}<div class="small">{{ t.note }}</div>{% endif %}
+      {% if e.kind == 'answer' %}
+        {% if t.question %}<div class="small muted answer-q">They wrote: "{{ t.question }}"</div>{% endif %}
+        <div class="answer-body">{{ e.body_text }}</div>
+      {% endif %}
     </div>
     <div class="item-actions">
       {% if w and w.generated_pdf_path %}<a class="btn" href="/waivers/{{ w.id }}/pdf" target="_blank">Preview</a>{% endif %}

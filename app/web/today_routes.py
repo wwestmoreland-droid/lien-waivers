@@ -59,7 +59,7 @@ def send_all(db: Session = Depends(get_db), user: User = Depends(require_role(*E
     """Send every item in Ready to send that can go out; the same send path as the Outbox."""
     sent = failed = 0
     for item in svc.ready_to_send(db):
-        if not item.sendable:
+        if not item.in_send_all:
             continue
         try:
             ok = outbound.send(db, item.email, user.email)
