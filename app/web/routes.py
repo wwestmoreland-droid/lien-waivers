@@ -142,7 +142,12 @@ def jobs_page(request: Request, q: str = "", show: str = "", by: str = "", msg: 
         def hit(p: Project) -> bool:
             return any(ql in (v or "").lower() for v in (p.number, p.name, p.client_company, p.pm_name))
         tracked = [p for p in tracked if hit(p)]
-        others = [p for p in others if hit(p)]
+        # A search reaches every job in INTAKE and Archived, whatever its status, so a job
+        # still at an early status (e.g. 1 Opportunity Evaluation) can be tracked too.
+        everything = db.scalars(select(Project).where(Project.is_tracked.is_(False),
+                                                      Project.deleted_in_source.is_(False))
+                                .order_by(Project.number)).all()
+        others = [p for p in everything if hit(p)]
     open_waivers = dict(db.execute(select(Project.number, func.count(Waiver.id)).join(Subcontract, Subcontract.project_id == Project.id)
                                    .join(Waiver, Waiver.subcontract_id == Subcontract.id)
                                    .where(Project.is_tracked.is_(True), Waiver.status.in_(("draft", "sent", "received")))

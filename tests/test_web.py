@@ -490,3 +490,16 @@ def test_stylesheet_link_changes_with_its_contents(client):
     css = (Path(r.__file__).parent / "static" / "app.css").read_bytes()
     page = client.get("/more").text
     assert f'/static/app.css?v={hashlib.sha256(css).hexdigest()[:10]}"' in page
+
+
+def test_search_finds_and_tracks_a_job_at_any_status(client, db):
+    """A job still at an early INTAKE status (here 3 Estimating) isn't in the active list,
+    but a search finds it and it can be tracked."""
+    sync_runner.sync_now("test")
+    assert "P--TX-010126-1" not in client.get("/jobs").text
+    r = client.get("/jobs?q=austin")
+    assert "P--TX-010126-1" in r.text and "3 Estimating" in r.text and "1 untracked job matches" in r.text
+    assert client.post("/projects/P--TX-010126-1/track?view=jobs").status_code == 200
+    db.expire_all()
+    assert db.scalar(select(Project).where(Project.number == "P--TX-010126-1")).is_tracked
+    assert "P--TX-010126-1" in client.get("/jobs").text  # and stays on the Jobs page once tracked
