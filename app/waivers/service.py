@@ -159,6 +159,8 @@ def refresh_partial_amounts(db: Session, actor: str = SYSTEM) -> int:
     n = 0
     for w in db.scalars(select(Waiver).where(Waiver.type.in_([t.value for t in PARTIALS]), Waiver.supplier_id.is_(None),
                                              Waiver.status.in_([s.value for s in EDITABLE]))).all():
+        if w.payable.is_manual:
+            continue  # entered by hand: the amount is whatever was typed in
         new = paid_through(w.subcontract, w.payable)
         if w.amount == new:
             continue
@@ -733,6 +735,42 @@ def final_checks(sc: Subcontract) -> dict:
     paid = [p for p in pays if p.paid_date]
     return {"ctc": ctc.cost_to_complete, "unpaid": [p for p in pays if not p.paid_date],
             "last_paid": max(paid, key=lambda p: (p.paid_date, order_key(p))) if paid else None}
+
+
+def create_manual_waiver(db: Session, sc: Subcontract, wtype: WaiverType, amount: Decimal, through: date,
+                         actor: str, invoice_no: str | None = None, paid_date: date | None = None,
+                         note: str | None = None, payment_amount: Decimal | None = None) -> Waiver:
+    """A waiver entered by hand, for something Smartsheet doesn't have (a payment that was never
+    entered, a corrected amount). It hangs off its own stand-in invoice that is never synced or
+    counted: marked removed-from-source, so cost to complete and paid-to-date ignore it, and the
+    amount typed in is kept as is. Its request email is drafted like any other waiver's."""
+    from sqlalchemy import func
+
+    if amount is None or amount <= 0:
+        raise ValueError("Enter the waiver amount.")
+    if through is None:
+        raise ValueError("Enter the through date.")
+    if wtype in (WaiverType.UNCONDITIONAL_PARTIAL, WaiverType.UNCONDITIONAL_FINAL) and paid_date is None:
+        raise ValueError("An unconditional waiver is for money already paid: enter the paid date.")
+    if wtype in PARTIALS and not (invoice_no or "").strip():
+        raise ValueError("Enter the invoice number the payment was for (it goes in the email).")
+    lowest = db.scalar(select(func.min(Payable.source_row_id))) or 0
+    p = Payable(source_row_id=min(lowest, 0) - 1, project_number=sc.project.number, vendor_id=sc.vendor_id,
+                subcontract_id=sc.id, match_status="matched", vendor_raw="(entered by hand)",
+                invoice_no=(invoice_no or "").strip() or None, amount=payment_amount or amount, date_received=through,
+                billed_through_date=through, approval_status="Approved", paid_date=paid_date,
+                material_sub_other="Sub", deleted_in_source=True)
+    db.add(p)
+    db.flush()
+    w = Waiver(payable_id=p.id, subcontract_id=sc.id, type=wtype.value, state=project_state(sc.project),
+               amount=amount, through_date=through, through_date_is_fallback=False,
+               status=WaiverStatus.DRAFT.value, reviewer_email=get_setting(db, "default_reviewer_email"))
+    db.add(w)
+    db.flush()
+    log_event(db, w, actor, "created", note="entered by hand" + (f": {note.strip()}" if note and note.strip() else ""))
+    audit(db, actor, "waiver.manual", "subcontract", sc.id, waiver_id=w.id, type=wtype.value, amount=str(amount))
+    attach_template_and_render(db, w, actor)
+    return w
 
 
 def prepare_unconditional_final(db: Session, sc: Subcontract, actor: str) -> Waiver:

@@ -85,6 +85,29 @@
         {% else %}<span class="muted">none yet</span>{% endif %}
       </div>
 
+      {% if ed %}
+      <div class="sc-line"><span class="lbl">Other waiver</span>
+        <details class="pick manual">
+          <summary class="btn sm">Add a waiver by hand</summary>
+          <form method="post" action="/subs/{{ sc.id }}/manual-waiver" enctype="multipart/form-data" class="manual-form">
+            <input type="hidden" name="back" value="{{ back }}">
+            <div class="small muted">For something Smartsheet doesn't have, like a payment that was never entered or a corrected amount. It doesn't change cost to complete or paid to date.</div>
+            <label>Type <select name="wtype" required>
+              {% for t in WaiverType %}<option value="{{ t.value }}" {{ 'selected' if t.value == 'UNCONDITIONAL_PARTIAL' }}>{{ t.label }}</option>{% endfor %}
+            </select></label>
+            <label>Waiver amount <input name="amount" inputmode="decimal" placeholder="17,935.00" required></label>
+            <label>Through date <input type="date" name="through_date" required></label>
+            <label>Invoice # <input name="invoice_no" placeholder="needed for a partial"></label>
+            <label>This payment <input name="payment_amount" inputmode="decimal" placeholder="defaults to the waiver amount"></label>
+            <label>Paid date <input type="date" name="paid_date"></label>
+            <label>Note <input name="note" placeholder="why it was added by hand"></label>
+            <label>Already signed? <input type="file" name="file" accept=".pdf,image/*"></label>
+            <div class="small muted">Without a file, the request email goes to Ready to send for you to check. With a signed file, it goes straight to Signed copies back.</div>
+            <div class="row-actions"><button class="btn primary">Add waiver</button></div>
+          </form>
+        </details>
+      </div>
+      {% endif %}
       {% with back=back %}{% include "partials/suppliers.html" %}{% endwith %}
       <div class="small" style="margin-top:6px"><a href="/subs/{{ sc.id }}">Payables, change orders and history →</a></div>
     </div>
