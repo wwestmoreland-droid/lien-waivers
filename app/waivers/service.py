@@ -213,7 +213,7 @@ def held_partials(db: Session) -> list[Waiver]:
 
 
 def release_monthly_partials(db: Session, actor: str = SYSTEM, now_: bool = False,
-                             today: date | None = None) -> int:
+                             today: date | None = None, sc_id: int | None = None) -> int:
     """On the send day (or now_, from "Send now" on Today), each sub's held partials collapse
     into one: the newest, which already covers everything paid so far. The older ones are
     cancelled and the newest gets its request email. Returns how many emails were drafted."""
@@ -227,7 +227,8 @@ def release_monthly_partials(db: Session, actor: str = SYSTEM, now_: bool = Fals
             return 0
     by_sub: dict[int, list[Waiver]] = {}
     for w in held_partials(db):
-        by_sub.setdefault(w.subcontract_id, []).append(w)
+        if sc_id is None or w.subcontract_id == sc_id:
+            by_sub.setdefault(w.subcontract_id, []).append(w)
     n = 0
     for ws in by_sub.values():
         ws.sort(key=lambda w: (w.payable.paid_date or date.min, order_key(w.payable)))
@@ -248,6 +249,44 @@ def release_monthly_partials(db: Session, actor: str = SYSTEM, now_: bool = Fals
         from app.services.settings_store import set_setting
         set_setting(db, "partials_released_month", month, actor)
     return n
+
+
+def latest_partial(db: Session, sc: Subcontract, actor: str) -> Waiver:
+    """'Send latest partial' on a sub: a partial for everything paid so far, now, whatever the
+    monthly schedule. Uses what's there when it can: held partials are collapsed into the newest,
+    a draft or cancelled one on the last paid invoice is reused, otherwise one is created.
+    Refuses when the last paid invoice's partial already went out (it's already up to date)."""
+    held = [w for w in held_partials(db) if w.subcontract_id == sc.id]
+    if held:
+        release_monthly_partials(db, actor, now_=True, sc_id=sc.id)
+        held.sort(key=lambda w: (w.payable.paid_date or date.min, order_key(w.payable)))
+        return held[-1]
+    last = final_checks(sc)["last_paid"]
+    if last is None:
+        raise ValueError(f"{sc.vendor.name} has no paid invoice on this job yet.")
+    w = db.scalar(select(Waiver).where(Waiver.payable_id == last.id, Waiver.supplier_id.is_(None),
+                                       Waiver.type.in_([t.value for t in PARTIALS])).order_by(Waiver.id.desc()))
+    if w is not None and w.status not in (WaiverStatus.DRAFT, WaiverStatus.VOID, WaiverStatus.NEEDS_REVIEW):
+        when = f" on {w.sent_at:%b} {w.sent_at.day}" if w.sent_at else ""
+        raise ValueError(f"{sc.vendor.name}'s latest partial (#{w.id}, {w.amount:,.2f}) already went out{when} "
+                         f"and covers invoice {last.invoice_no or '(no number)'}, the last one paid.")
+    if w is None:
+        w = create_waiver(db, last, sc, WaiverType.UNCONDITIONAL_PARTIAL, None, actor)
+    elif w.status == WaiverStatus.VOID:
+        restore(db, w, actor)
+    new = paid_through(sc, last)
+    if w.amount != new and not last.is_manual:
+        log_event(db, w, actor, "amount_changed", note="total paid to date", old=str(w.amount), new=str(new))
+        w.amount = new
+        if w.template_key:
+            render_pdf(db, w, actor)
+        from app.mail import outbound
+        outbound.rerender_request_draft(db, w)
+    if w.status == WaiverStatus.DRAFT:
+        from app.mail import outbound
+        outbound.queue_waiver_request(db, w, actor)
+    log_event(db, w, actor, "prepared", note="latest partial requested by hand from the job page")
+    return w
 
 
 def create_waiver(db: Session, p: Payable, sc: Subcontract, wtype: WaiverType, ev: PayableEvent | None,

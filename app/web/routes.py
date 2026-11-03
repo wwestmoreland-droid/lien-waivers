@@ -265,6 +265,40 @@ async def manual_waiver(sc_id: int, wtype: str = Form(...), amount: str = Form(.
     return RedirectResponse(with_msg(safe_back(back, default), msg), status_code=303)
 
 
+@router.post("/subs/{sc_id}/latest-partial")
+def latest_partial(sc_id: int, send: str = Form(""), back: str = Form(""), db: Session = Depends(get_db),
+                   user: User = Depends(require_role(*EDITORS))):
+    """'Send latest partial' next to a sub: one partial for everything paid so far, now."""
+    from app.db.models import EmailMessage
+    from app.mail import outbound
+
+    sc = db.get(Subcontract, sc_id)
+    if not sc:
+        raise HTTPException(404)
+    default = f"/jobs/{sc.project.number}"
+    try:
+        w = waiver_service.latest_partial(db, sc, user.email)
+    except ValueError as exc:
+        db.rollback()
+        return RedirectResponse(with_msg(safe_back(back, default), str(exc)), status_code=303)
+    db.commit()
+    label = f"Partial for {sc.vendor.name} ({w.amount:,.2f}, everything paid so far)"
+    e = db.scalar(select(EmailMessage).where(EmailMessage.waiver_id == w.id, EmailMessage.kind == "waiver_request",
+                                             EmailMessage.status.in_(("draft", "queued", "failed"))))
+    if w.status == "needs_review":
+        msg = f"{label} is blocked: {w.review_reason}"
+    elif send != "1" or e is None:
+        msg = f"{label} is in Ready to send on Today."
+    else:
+        try:
+            ok = outbound.send(db, e, user.email)
+        except ValueError as exc:
+            ok, e.error = False, str(exc)
+        db.commit()
+        msg = f"{label} was sent." if ok else f"{label} couldn't be sent: {e.error}. It's in Ready to send."
+    return RedirectResponse(with_msg(safe_back(back, default), msg), status_code=303)
+
+
 @router.post("/subs/{sc_id}/unconditional-final")
 def unconditional_final(sc_id: int, send: str = Form(""), back: str = Form(""), db: Session = Depends(get_db),
                         user: User = Depends(require_role(*EDITORS))):

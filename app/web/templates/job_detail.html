@@ -86,6 +86,20 @@
       </div>
 
       {% if ed %}
+      <div class="sc-line"><span class="lbl">Latest partial</span>
+        <details class="pick final">
+          <summary class="btn sm">Send latest partial</summary>
+          <form method="post" action="/subs/{{ sc.id }}/latest-partial" class="final-form">
+            <input type="hidden" name="back" value="{{ back }}">
+            <div class="small">One partial waiver for everything paid to {{ sc.vendor.name }} on this job so far{% if r.checks.last_paid %}, through invoice {{ r.checks.last_paid.invoice_no or '(no number)' }} paid {{ r.checks.last_paid.paid_date|fdate }}{% endif %}. It doesn't wait for the monthly send.</div>
+            {% if not r.checks.last_paid %}<div class="warnbox">No invoice is paid yet.</div>{% else %}
+            <div class="row-actions">
+              <button class="btn primary" name="send" value="1">Send it now</button>
+              <button class="btn" name="send" value="">Put it in Ready to send</button>
+            </div>{% endif %}
+          </form>
+        </details>
+      </div>
       <div class="sc-line"><span class="lbl">Other waiver</span>
         <details class="pick manual">
           <summary class="btn sm">Add a waiver by hand</summary>

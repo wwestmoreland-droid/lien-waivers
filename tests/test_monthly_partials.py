@@ -123,3 +123,50 @@ def test_send_day_setting(mail):
     assert waivers.next_partial_send(db, date(2026, 11, 3)) == date(2026, 11, 15)
     set_setting(db, "partials_released_month", "2026-11", "ap")
     assert waivers.next_partial_send(db, date(2026, 11, 20)) == date(2026, 12, 15)
+
+
+# ---------------------------------------------------------------- Send latest partial
+
+def delta_sc(db):
+    from app.db.models import Subcontract
+    return next(s for s in db.scalars(select(Subcontract)) if s.vendor.name.startswith("Delta")
+                and s.project.number == PROJECT)
+
+
+def test_send_latest_partial_collapses_whats_held_for_that_sub(mail, monkeypatch):
+    db = mail.db
+    monkeypatch.setattr("app.services.today.local_today", lambda: date(2026, 11, 20))
+    small_invoices(mail, (400.0, "2026-11-03"), (250.0, "2026-11-10"))
+    w = waivers.latest_partial(db, delta_sc(db), "ap")
+    db.commit()
+    db.expire_all()
+    ws = delta_partials(db)
+    assert w.id == ws[-1].id and [x.status for x in ws] == [WaiverStatus.VOID, WaiverStatus.DRAFT]
+    assert db.get(Waiver, w.id).amount == Decimal("30297.80") and request_email(db, ws[-1]) is not None
+
+
+def test_send_latest_partial_when_nothing_is_held(mail, monkeypatch):
+    """Only October's Pay App 1 is paid (loaded as history, so no waiver yet): one is made now."""
+    db = mail.db
+    sc = delta_sc(db)
+    w = waivers.latest_partial(db, sc, "ap")
+    db.commit()
+    assert w.status == WaiverStatus.DRAFT and w.amount == Decimal("29647.80") and not waivers.is_held(db, w)
+    assert request_email(db, w) is not None
+    # Once it's gone out, asking again says it's already up to date.
+    from app.mail import outbound
+    outbound.send(db, request_email(db, w), "ap")
+    db.commit()
+    with pytest.raises(ValueError, match="already went out"):
+        waivers.latest_partial(db, sc, "ap")
+
+
+def test_send_latest_partial_button(mail):
+    db = mail.db
+    sc = delta_sc(db)
+    with TestClient(create_app()) as c:
+        assert f"/subs/{sc.id}/latest-partial" in c.get(f"/jobs/{PROJECT}").text
+        r = c.post(f"/subs/{sc.id}/latest-partial", data={"send": "1"}, follow_redirects=False)
+        assert r.status_code == 303 and "was%20sent" in r.headers["location"]
+        again = c.post(f"/subs/{sc.id}/latest-partial", data={"send": ""}, follow_redirects=False)
+        assert "already%20went%20out" in again.headers["location"]
