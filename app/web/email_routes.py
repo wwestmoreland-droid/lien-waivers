@@ -476,7 +476,8 @@ def email_settings(request: Request, msg: str = "", db: Session = Depends(get_db
     return render(request, "email_settings.html", user, rows=rows, msg=msg,
                   auto_send=get_setting(db, "auto_send") or {}, kinds=outbound.AUTO_SEND_KINDS,
                   received=bool(get_setting(db, "send_received_reply")),
-                  reminder_days=get_setting(db, "reminder_days"), escalation_day=get_setting(db, "escalation_day"))
+                  reminder_days=get_setting(db, "reminder_days"), escalation_day=get_setting(db, "escalation_day"),
+                  partial_schedule=get_setting(db, "partial_schedule"), partial_send_day=get_setting(db, "partial_send_day"))
 
 
 @router.post("/settings/email/template/{key}")
@@ -498,6 +499,29 @@ def save_template(key: str, text: str = Form(""), reset: str = Form(""), db: Ses
     set_setting(db, "email_templates", overrides, user.email)
     db.commit()
     return RedirectResponse("/settings/email?msg=" + quote(msg) + f"#{key}", status_code=303)
+
+
+@router.post("/settings/email/partials")
+def save_partials(schedule: str = Form("monthly"), day: str = Form("1"), db: Session = Depends(get_db),
+                  user: User = Depends(require_role("Admin"))):
+    try:
+        d = int(day)
+    except ValueError:
+        d = 0
+    if schedule not in ("monthly", "each_payment") or not 1 <= d <= 28:
+        return RedirectResponse("/settings/email?msg=" + quote("Pick a send day from 1 to 28."), status_code=303)
+    if schedule != get_setting(db, "partial_schedule"):
+        set_setting(db, "partial_schedule", schedule, user.email)
+    if d != get_setting(db, "partial_send_day"):
+        set_setting(db, "partial_send_day", d, user.email)
+    msg = "Saved."
+    if schedule == "each_payment":
+        from app.waivers import service as waivers
+        n = waivers.release_monthly_partials(db, user.email)
+        if n:
+            msg += f" {n} held partial{'s' if n != 1 else ''} went to Ready to send."
+    db.commit()
+    return RedirectResponse("/settings/email?msg=" + quote(msg), status_code=303)
 
 
 @router.post("/settings/email/sending")

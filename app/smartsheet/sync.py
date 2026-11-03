@@ -95,6 +95,7 @@ def run_sync(db: Session, source: SheetSource, trigger: str = "schedule",
         waivers.refresh_payable_reviews(db)
         waivers.recheck_blocked(db)
         stats["partial_amounts_updated"] = waivers.refresh_partial_amounts(db)
+        stats["monthly_partials_released"] = waivers.release_monthly_partials(db)
         from app.mail import outbound
         stats["request_emails_drafted"] += outbound.ensure_request_drafts(db)
         from app.contacts import service as contacts

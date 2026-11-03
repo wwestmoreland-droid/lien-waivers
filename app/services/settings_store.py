@@ -24,6 +24,11 @@ def defaults() -> dict:
         # Days after the request goes out (checks are mailed, so give them time to arrive).
         "reminder_days": [7, 10],
         "escalation_day": 13,
+        # Partial waivers from paid invoices: "monthly" holds them and sends one per sub (the
+        # newest, covering everything paid so far) on partial_send_day; "each_payment" sends one
+        # for every paid invoice.
+        "partial_schedule": "monthly",
+        "partial_send_day": 1,
         "email_templates": {},
         # Fill blank contact cells in All Subcontracts from confirmed contacts (never overwrites).
         "smartsheet_contact_fill": True,

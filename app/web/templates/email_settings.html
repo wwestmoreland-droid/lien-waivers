@@ -22,6 +22,18 @@ Banned phrases, em dashes, exclamation points, bold and emojis are refused when 
 </div>
 
 <div class="panel">
+  <h2 style="margin-top:0">Partial waivers</h2>
+  <p class="small muted">Once a month, each sub gets one partial covering everything paid so far, instead of one for every invoice.
+    Partials wait until the send day, then the newest one per sub goes to Ready to send. Finals, past invoices and waivers added by hand aren't held.</p>
+  <form method="post" action="/settings/email/partials" class="filters">
+    <label><input type="radio" name="schedule" value="monthly" {{ 'checked' if partial_schedule == 'monthly' }} {{ 'disabled' if not admin }}> Once a month, on day
+      <input type="number" name="day" min="1" max="28" value="{{ partial_send_day }}" style="width:60px" {{ 'disabled' if not admin }}></label>
+    <label><input type="radio" name="schedule" value="each_payment" {{ 'checked' if partial_schedule != 'monthly' }} {{ 'disabled' if not admin }}> For every paid invoice</label>
+    {% if admin %}<button class="btn">Save</button>{% endif %}
+  </form>
+</div>
+
+<div class="panel">
   <h2 style="margin-top:0">Review before send</h2>
   <p class="small muted">Every email waits in the Outbox for a person to send it. Tick a type to let it go out on its own once you trust it.</p>
   <form method="post" action="/settings/email/sending">

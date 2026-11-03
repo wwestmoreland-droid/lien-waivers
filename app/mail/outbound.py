@@ -201,6 +201,9 @@ def queue_waiver_request(db: Session, w: Waiver, actor: str = "system:mail", fre
     fresh: a new request even if one was sent before (a cancelled waiver brought back)."""
     if w.status != WaiverStatus.DRAFT:
         return None
+    from app.waivers import service as waivers
+    if waivers.is_held(db, w):
+        return None  # a partial waiting for the monthly send
     unsent = ("draft", "queued", "failed")
     existing = db.scalar(select(EmailMessage).where(EmailMessage.waiver_id == w.id,
                                                     EmailMessage.kind == "waiver_request",

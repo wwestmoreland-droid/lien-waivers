@@ -51,6 +51,8 @@ def today(request: Request, msg: str = "", db: Session = Depends(get_db), user: 
         "can_review": lambda w: svc.can_review(user, w), "check": lambda w: svc.check_words(w, notary[w.id]),
         "reasons": _reasons, "next_step": lambda w: svc.next_step(db, w), "today": svc.local_today(),
         "accepted_week": svc.accepted_this_week(db),
+        "held": waivers.held_partials(db) if editor and waivers.partials_monthly(db) else [],
+        "next_send": waivers.next_partial_send(db),
         "vendors": db.scalars(select(Vendor).order_by(Vendor.name)).all() if questions else []})
 
 
@@ -70,6 +72,16 @@ def send_all(db: Session = Depends(get_db), user: User = Depends(require_role(*E
         db.commit()
     msg = f"Sent {sent}." + (f" {failed} couldn't be sent; the reason is shown on each." if failed else "")
     return RedirectResponse("/?msg=" + quote(msg), status_code=303)
+
+
+@router.post("/today/release-partials")
+def release_partials(db: Session = Depends(get_db), user: User = Depends(require_role(*EDITORS))):
+    """'Send now' on the held monthly partials: one request per sub goes to Ready to send today."""
+    from app.waivers import service as waivers
+    n = waivers.release_monthly_partials(db, user.email, now_=True)
+    db.commit()
+    msg = f"{n} partial waiver{'s are' if n != 1 else ' is'} in Ready to send, one per sub."
+    return RedirectResponse("/?msg=" + quote(msg) + "#send", status_code=303)
 
 
 @router.post("/today/delete-drafts")
