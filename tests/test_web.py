@@ -330,9 +330,43 @@ def test_cant_send_shows_the_reason(client, db, source, mailing):
     e.to_addrs = []
     db.commit()
     r = client.get("/")
-    assert "No email address for this sub." in r.text and ">Fix<" in r.text
+    assert "No email address for this sub." in r.text and "Add email" in r.text and "No waiver needed" in r.text
     client.post("/today/send-all")
     assert not [m for m in mailing.sent if "Lien waiver" in m.subject]
+
+
+def test_no_email_add_one_from_today(client, db, source, mailing):
+    from app.db.models import EmailMessage
+    _pay(source, 1003)
+    e = db.scalar(select(EmailMessage).where(EmailMessage.kind == "waiver_request"))
+    e.to_addrs = []
+    db.commit()
+    r = client.post(f"/waivers/{e.waiver_id}/send-to", data={"email": "AR@DeltaFire.com", "back": "/"},
+                    follow_redirects=False)
+    assert "go%20to%20ar%40deltafire.com" in r.headers["location"]
+    db.expire_all()
+    e = db.get(EmailMessage, e.id)
+    assert e.to_addrs == ["ar@deltafire.com"] and e.waiver.subcontract.vendor.waiver_email == "ar@deltafire.com"
+    assert "No email address for this sub." not in client.get("/").text
+    bad = client.post(f"/waivers/{e.waiver_id}/send-to", data={"email": "nope", "back": "/"}, follow_redirects=False)
+    assert "isn%27t%20an%20email" in bad.headers["location"] or "isn't an email" in bad.headers["location"]
+
+
+def test_no_waiver_needed_from_today(client, db, source, mailing):
+    from app.db.models import EmailMessage, Waiver
+    _pay(source, 1003)
+    e = db.scalar(select(EmailMessage).where(EmailMessage.kind == "waiver_request"))
+    e.to_addrs = []
+    db.commit()
+    r = client.post(f"/waivers/{e.waiver_id}/void", data={"reason": "No waiver needed (marked from Today)",
+                                                         "back": "/"}, follow_redirects=False)
+    assert r.headers["location"].startswith("/?msg=Cancelled")
+    db.expire_all()
+    assert db.get(Waiver, e.waiver_id).status == "void" and db.get(EmailMessage, e.id).status == "discarded"
+    sync_runner.sync_now("test")  # and the next sync doesn't bring it back
+    db.expire_all()
+    assert db.get(Waiver, e.waiver_id).status == "void"
+    assert "No email address for this sub." not in client.get("/").text
 
 
 def test_accept_and_send_back_from_today(client, db, source, mailing):

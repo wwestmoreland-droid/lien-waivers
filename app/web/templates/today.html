@@ -50,6 +50,14 @@
       {% if w and w.generated_pdf_path %}<a class="btn" href="/waivers/{{ w.id }}/pdf" target="_blank">Preview</a>{% endif %}
       {% if t.sendable %}
         <form method="post" action="/email/{{ e.id }}/send"><input type="hidden" name="back" value="{{ back }}"><button class="btn primary">Send</button></form>
+      {% elif w and not e.to_addrs %}
+        <span class="problem">{{ t.problem }}</span>
+        <form method="post" action="/waivers/{{ w.id }}/send-to" class="pickline"><input type="hidden" name="back" value="{{ back }}">
+          <input type="email" name="email" placeholder="billing@their-company.com" required aria-label="Email address for {{ w.subcontract.vendor.name }}">
+          <button class="btn primary">Add email</button></form>
+        <form method="post" action="/waivers/{{ w.id }}/void" onsubmit="return confirm('No waiver needed from {{ w.subcontract.vendor.name }} for this payment? The waiver is cancelled (Restore on the waiver brings it back).')">
+          <input type="hidden" name="back" value="{{ back }}"><input type="hidden" name="reason" value="No waiver needed (marked from Today)">
+          <button class="btn">No waiver needed</button></form>
       {% else %}
         <span class="problem">{{ t.problem }}</span> <a class="btn" href="{{ t.fix_url }}">Fix</a>
       {% endif %}

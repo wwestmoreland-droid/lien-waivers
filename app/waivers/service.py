@@ -452,6 +452,8 @@ def undo_received(db: Session, w: Waiver, actor: str, note: str) -> None:
     from app.db.models import EmailMessage
     e = db.get(EmailMessage, email_id) if email_id else None
     if e is not None and e.direction == "in":
+        from app.mail import outbound
+        outbound.log_email(db, e, actor, "not_filed", reason=note)  # never filed from this email again
         from app.mail import replies
         words = replies.own_words(e)
         if words.strip():
