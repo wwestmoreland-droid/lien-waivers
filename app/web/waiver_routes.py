@@ -190,8 +190,9 @@ async def received(wid: int, file: UploadFile = File(...), back: str = Form(""),
     content = await file.read()
     if not content:
         return _back(w, "The file was empty.")
-    return _act(db, w, service.mark_received, user.email, file.filename or "signed.pdf", content, back=back,
-                done=f"Got it. {w.subcontract.vendor.name}'s signed copy is under Signed copies back.")
+    # Uploaded by a person: accepted on the spot, like a waiver added by hand.
+    return _act(db, w, service.accept_by_hand, user.email, file.filename or "signed.pdf", content, back=back,
+                done=f"Got it. {w.subcontract.vendor.name}'s signed copy is accepted and on file.")
 
 
 @router.post("/waivers/{wid}/accept")

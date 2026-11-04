@@ -900,6 +900,19 @@ def create_manual_waiver(db: Session, sc: Subcontract, wtype: WaiverType, amount
     return w
 
 
+def accept_by_hand(db: Session, w: Waiver, actor: str, filename: str, content: bytes) -> None:
+    """A waiver entered by hand with its signed copy: accepted on the spot. A person has it in
+    hand, so there's no review, no automatic check and nothing that blocks it (a missing form
+    template doesn't matter once it's signed). It stays the one on file until a newer signed
+    waiver comes in (best_signed_waiver picks by through date)."""
+    mark_received(db, w, actor, filename, content)
+    w.review_reason = None
+    w.verification = {"status": "entered_by_hand", "note": "Signed copy added by hand; not checked."}
+    for kind in ("statutory_form_missing", "template_missing", "final_exceptions"):
+        upsert_review(db, kind, "waiver", w.id, None, "", False)
+    accept(db, w, actor, note="Signed copy added by hand")
+
+
 def prepare_unconditional_final(db: Session, sc: Subcontract, actor: str) -> Waiver:
     """Create the sub's unconditional final against its most recent paid invoice. Its request
     email is drafted like any other waiver's."""

@@ -247,7 +247,7 @@ async def manual_waiver(sc_id: int, wtype: str = Form(...), amount: str = Form("
         if content:
             from app.db.models import EmailMessage
             from app.mail import outbound
-            waiver_service.mark_received(db, w, user.email, file.filename, content)
+            waiver_service.accept_by_hand(db, w, user.email, file.filename, content)
             db.flush()
             # Already signed: the request email isn't needed.
             outbound.delete_drafts(db, list(db.scalars(select(EmailMessage.id).where(
@@ -258,7 +258,7 @@ async def manual_waiver(sc_id: int, wtype: str = Form(...), amount: str = Form("
     db.commit()
     label = f"{WaiverType(w.type).label} for {sc.vendor.name}" + (f" (${w.amount:,.2f})" if w.amount is not None else "")
     if content:
-        msg = f"{label} is filed with its signed copy, under Signed copies back on Today."
+        msg = f"{label} is accepted with its signed copy. It's the waiver on file until a newer signed one comes in."
     elif w.status == "needs_review":
         msg = f"{label} was added but is blocked: {w.review_reason}"
     else:
