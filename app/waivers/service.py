@@ -101,6 +101,12 @@ def handle_event(db: Session, ev: PayableEvent, p: Payable, stats=None) -> None:
         upsert_review(db, r.kind, "payable", p.id, p.project_number,
                       f"{sc.vendor.name}, invoice {p.invoice_no or '-'}: {r.message}", True, stats)
     outcome = d.note
+    uf = current_unconditional_final(db, sc) if d.waiver else None
+    if uf is not None:
+        # Paid in full is on file: nothing more is generated for this sub.
+        ev.processed_at = now()
+        ev.outcome = f"no waiver: unconditional final #{uf.id} is on file"
+        return
     if d.waiver:
         w = create_waiver(db, p, sc, d.waiver, ev)
         outcome = f"{d.waiver.value} #{w.id} ({w.status})"
@@ -232,6 +238,11 @@ def release_monthly_partials(db: Session, actor: str = SYSTEM, now_: bool = Fals
     n = 0
     for ws in by_sub.values():
         ws.sort(key=lambda w: (w.payable.paid_date or date.min, order_key(w.payable)))
+        uf = current_unconditional_final(db, ws[0].subcontract)
+        if uf is not None:
+            for old in ws:
+                void(db, old, actor, f"Unconditional final #{uf.id} is on file")
+            continue
         keep = ws[-1]
         for old in ws[:-1]:
             void(db, old, actor, f"Covered by the monthly partial #{keep.id}")
@@ -895,6 +906,13 @@ def create_manual_waiver(db: Session, sc: Subcontract, wtype: WaiverType, amount
     db.add(w)
     db.flush()
     log_event(db, w, actor, "created", note="entered by hand" + (f": {note.strip()}" if note and note.strip() else ""))
+    if wtype == WaiverType.UNCONDITIONAL_FINAL:
+        # Paid in full: unsent waivers the app made for this sub aren't needed any more.
+        for old in db.scalars(select(Waiver).where(
+                Waiver.subcontract_id == sc.id, Waiver.supplier_id.is_(None), Waiver.id != w.id,
+                Waiver.status.in_((WaiverStatus.DRAFT.value, WaiverStatus.NEEDS_REVIEW.value)))).all():
+            if not old.payable.is_manual:
+                void(db, old, actor, f"Unconditional final #{w.id} was added by hand")
     audit(db, actor, "waiver.manual", "subcontract", sc.id, waiver_id=w.id, type=wtype.value, amount=str(amount))
     attach_template_and_render(db, w, actor)
     return w
