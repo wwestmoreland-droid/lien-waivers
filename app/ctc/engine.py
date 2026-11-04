@@ -88,7 +88,10 @@ def compute_ctc(
         amt = p.amount or ZERO
         status = _norm(p.approval_status)
         is_as_of = as_of is not None and p.source_row_id == as_of.source_row_id
-        if status == "approved" or (is_as_of and treat_as_of_as_approved and status not in ("rejected", "hold")):
+        # Paid means it was billed, even when nobody marked it Approved (rows entered after the fact).
+        paid_unmarked = bool(p.paid_date) and status not in ("rejected", "hold")
+        if status == "approved" or paid_unmarked or \
+                (is_as_of and treat_as_of_as_approved and status not in ("rejected", "hold")):
             billed += amt
             counted.append(p.source_row_id)
             if p.is_retention_invoice:
