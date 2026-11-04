@@ -170,3 +170,53 @@ def test_send_latest_partial_button(mail):
         assert r.status_code == 303 and "was%20sent" in r.headers["location"]
         again = c.post(f"/subs/{sc.id}/latest-partial", data={"send": ""}, follow_redirects=False)
         assert "already%20went%20out" in again.headers["location"]
+
+
+# ---------------------------------------------------------------- back-dated invoices (Daus, Cannon Creek)
+
+def test_back_dated_invoices_still_get_the_total_paid_so_far(mail, monkeypatch):
+    """Pay App 1 (paid Oct 16) came in as history, so it has no waiver. Then older card charges
+    are entered after the fact (paid last December): their held partials are for old dates.
+    Send latest partial must cover everything paid, not just up to those old dates."""
+    db = mail.db
+    monkeypatch.setattr("app.services.today.local_today", lambda: date(2026, 11, 20))
+    small_invoices(mail, (279.96, "2025-12-05"), (12500.0, "2025-12-05"), (39.31, "2025-12-08"))
+    assert len(waivers.held_partials(db)) == 3
+    w = waivers.latest_partial(db, delta_sc(db), "ap")
+    db.commit()
+    db.expire_all()
+    w = db.get(Waiver, w.id)
+    assert w.amount == Decimal("29647.80") + Decimal("12819.27")  # everything paid, not $12,819.27
+    assert w.payable.invoice_no == "Pay App 1" and request_email(db, w) is not None
+    assert all(x.status == WaiverStatus.VOID for x in delta_partials(db))  # the held ones are covered
+
+
+def test_monthly_send_uses_the_last_paid_invoice_too(mail, monkeypatch):
+    db = mail.db
+    monkeypatch.setattr("app.services.today.local_today", lambda: date(2026, 11, 20))
+    small_invoices(mail, (279.96, "2025-12-05"), (39.31, "2025-12-08"))
+    waivers.release_monthly_partials(db, "ap", now_=True)
+    db.commit()
+    db.expire_all()
+    w = db.scalar(select(Waiver).join(Payable).where(Payable.invoice_no == "Pay App 1"))
+    assert w.amount == Decimal("29647.80") + Decimal("319.27") and request_email(db, w) is not None
+
+
+def test_corrected_partial_when_the_total_grew_after_it_went_out(mail, monkeypatch):
+    from app.mail import outbound
+    db = mail.db
+    monkeypatch.setattr("app.services.today.local_today", lambda: date(2026, 11, 20))
+    first = waivers.latest_partial(db, delta_sc(db), "ap")
+    outbound.send(db, request_email(db, first), "ap")
+    db.commit()
+    assert first.amount == Decimal("29647.80")
+    small_invoices(mail, (500.0, "2026-01-10"))  # an older payment entered after the fact
+    second = waivers.latest_partial(db, delta_sc(db), "ap")
+    db.commit()
+    db.expire_all()
+    assert db.get(Waiver, second.id).amount == Decimal("30147.80") and second.id != first.id
+    assert db.get(Waiver, first.id).status == WaiverStatus.VOID  # the low one, unsigned, is retired
+    with pytest.raises(waivers.UpToDate):
+        outbound.send(db, request_email(db, db.get(Waiver, second.id)), "ap")
+        db.commit()
+        waivers.latest_partial(db, delta_sc(db), "ap")
