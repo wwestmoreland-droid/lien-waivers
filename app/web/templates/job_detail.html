@@ -19,7 +19,7 @@
 </div>
 {% if not p.is_tracked %}<div class="warnbox">This project is not tracked. Data shown is from when it was.</div>{% endif %}
 
-{% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
+{% if msg and not open_sc %}<div class="flash">{{ msg }}</div>{% endif %}
 {% set back = '/jobs/' ~ p.number ~ '#subs' %}
 {% set ed = user.role in ('Admin', 'AP') %}
 {% set status_badge = {'ok': '', 'complete': 'ok', 'over_billed': 'bad', 'no_contract': 'warn'} %}
@@ -27,7 +27,7 @@
 <p class="small muted">Click a sub for its cost to complete, latest invoice, signed waiver and suppliers. The waiver that counts is the unconditional final if there is one, otherwise the conditional final, otherwise the most recent partial.</p>
 <div class="subcards">
   {% for r in subs %}{% set sc = r.sc %}{% set c = r.ctc %}{% set w = r.waiver %}{% set i = r.invoice %}{% set uf = r.final %}
-  <details class="subcard" id="sub-{{ sc.id }}">
+  <details class="subcard" id="sub-{{ sc.id }}" {{ 'open' if open_sc == sc.id|string }}>
     <summary>
       <span class="sc-name"><strong>{{ sc.vendor.name }}</strong>
         {% with back=back %}{% include "partials/supplier_switch.html" %}{% endwith %}</span>
@@ -41,6 +41,7 @@
         {% if c and c.status != 'ok' %}<span class="badge {{ status_badge.get(c.status, '') }}">{{ c.status|replace('_', ' ') }}</span>{% endif %}</span>
     </summary>
     <div class="sc-body">
+      {% if msg and open_sc == sc.id|string %}<div class="flash">{{ msg }}</div>{% endif %}
       {% if c %}
       <div class="sc-grid">
         <div><span class="lbl">Original</span>{{ c.original_contract|money }}</div>
@@ -61,6 +62,15 @@
           · <a class="small" href="/waivers/{{ w.id }}">details</a>
         {% else %}<span class="muted">none yet</span>{% endif %}</div>
 
+      {% if r.in_progress %}
+      <div class="sc-line"><span class="lbl">Waivers in progress</span>
+        <ul class="plain">{% for x in r.in_progress %}{% set ow = x.w %}
+          <li><a href="/waivers/{{ ow.id }}">{{ WaiverType(ow.type).label }}</a>{% if ow.amount is not none %} · {{ ow.amount|money }}{% endif %}
+            {% if ow.through_date and not WaiverType(ow.type).is_final %} · through {{ ow.through_date|fdate }}{% endif %}
+            · <span class="muted">{% if x.held %}held for the monthly send{% else %}{{ {'needs_review': 'blocked', 'draft': 'in Ready to send', 'sent': 'sent, waiting on them', 'rejected': 'sent back for a correction', 'received': 'signed copy back, not reviewed'}.get(ow.status, ow.status) }}{% endif %}</span>
+            {% if ow.payable.is_manual %}<span class="badge">added by hand</span>{% endif %}</li>
+        {% endfor %}</ul></div>
+      {% endif %}
       <div class="sc-line"><span class="lbl">Unconditional final</span>
         {% if uf %}
           <a href="/waivers/{{ uf.id }}">{{ {'needs_review': 'blocked', 'draft': 'ready to send', 'void': 'cancelled'}.get(uf.status, uf.status) }}</a>
@@ -109,7 +119,7 @@
             <label>Type <select name="wtype" required>
               {% for t in WaiverType %}<option value="{{ t.value }}" {{ 'selected' if t.value == 'UNCONDITIONAL_PARTIAL' }}>{{ t.label }}</option>{% endfor %}
             </select></label>
-            <label>Waiver amount <input name="amount" inputmode="decimal" placeholder="17,935.00" required></label>
+            <label>Waiver amount <input name="amount" inputmode="decimal" placeholder="17,935.00"><span class="muted">not needed for an unconditional final</span></label>
             <label>Through date <input type="date" name="through_date" required></label>
             <label>Invoice # <input name="invoice_no" placeholder="needed for a partial"></label>
             <label>This payment <input name="payment_amount" inputmode="decimal" placeholder="defaults to the waiver amount"></label>

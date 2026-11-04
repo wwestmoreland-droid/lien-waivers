@@ -89,3 +89,34 @@ def test_form_on_the_job_page(mail):
     assert request_for(db, final).status == "discarded"
     partial = next(w for w in manual if w.type == WaiverType.UNCONDITIONAL_PARTIAL.value and w.payable.is_manual)
     assert partial.amount == Decimal("17935.00")
+
+
+def test_unconditional_final_needs_no_amount_and_shows_on_the_card(mail):
+    db = mail.db
+    sc = delta(db)
+    with TestClient(create_app()) as c:
+        r = c.post(f"/subs/{sc.id}/manual-waiver", data={
+            "wtype": "UNCONDITIONAL_FINAL", "amount": "", "through_date": "2026-11-02", "paid_date": "2026-11-02"},
+            follow_redirects=False)
+        loc = r.headers["location"]
+        assert loc.startswith(f"/jobs/{PROJECT}?open={sc.id}") and loc.endswith(f"#sub-{sc.id}")
+        page = c.get(loc.split("#")[0]).text
+    card = page.split(f'id="sub-{sc.id}"')[1].split('class="subcard"')[0]
+    assert card.lstrip().startswith("open") and "Unconditional final for Delta" in card  # opened, with the result
+    assert "Waivers in progress" in card and "added by hand" in card and "in Ready to send" in card
+    db.expire_all()
+    w = db.scalars(select(Waiver).where(Waiver.subcontract_id == sc.id).order_by(Waiver.id.desc())).first()
+    assert w.type == WaiverType.UNCONDITIONAL_FINAL.value and w.amount is None and w.generated_pdf_path
+    assert request_for(db, w) is not None
+
+
+def test_a_mistake_is_shown_on_the_card_too(mail):
+    db = mail.db
+    sc = delta(db)
+    with TestClient(create_app()) as c:
+        r = c.post(f"/subs/{sc.id}/manual-waiver", data={
+            "wtype": "UNCONDITIONAL_PARTIAL", "amount": "500", "through_date": "2026-11-02", "paid_date": "2026-11-02"},
+            follow_redirects=False)
+        page = c.get(r.headers["location"].split("#")[0]).text
+    card = page.split(f'id="sub-{sc.id}"')[1].split('class="subcard"')[0]
+    assert "Enter the invoice number" in card
