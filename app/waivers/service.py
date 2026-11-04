@@ -703,8 +703,12 @@ def job_waiver_rows(db: Session, project: Project) -> list[dict]:
         from app.suppliers import service as suppliers
         sups = [{"supplier": s, "waiver": suppliers.best_waiver(db, s), "words": suppliers.status_words(db, s)}
                 for s in suppliers.active(db, sc)]
+        in_progress = db.scalars(select(Waiver).where(
+            Waiver.subcontract_id == sc.id, Waiver.supplier_id.is_(None),
+            Waiver.status.in_(("needs_review", "draft", "sent", "rejected", "received"))).order_by(Waiver.id)).all()
         rows.append({"sc": sc, "invoice": latest, "waiver": best_signed_waiver(db, sc), "suppliers": sups,
-                     "major": suppliers.is_major_trade(db, sc)})
+                     "major": suppliers.is_major_trade(db, sc),
+                     "in_progress": [{"w": w, "held": is_held(db, w)} for w in in_progress]})
     return rows
 
 
@@ -867,7 +871,9 @@ def create_manual_waiver(db: Session, sc: Subcontract, wtype: WaiverType, amount
     amount typed in is kept as is. Its request email is drafted like any other waiver's."""
     from sqlalchemy import func
 
-    if amount is None or amount <= 0:
+    if wtype == WaiverType.UNCONDITIONAL_FINAL:
+        amount = None  # an unconditional final says "paid in full"; it carries no amount
+    elif amount is None or amount <= 0:
         raise ValueError("Enter the waiver amount.")
     if through is None:
         raise ValueError("Enter the through date.")
@@ -892,6 +898,19 @@ def create_manual_waiver(db: Session, sc: Subcontract, wtype: WaiverType, amount
     audit(db, actor, "waiver.manual", "subcontract", sc.id, waiver_id=w.id, type=wtype.value, amount=str(amount))
     attach_template_and_render(db, w, actor)
     return w
+
+
+def accept_by_hand(db: Session, w: Waiver, actor: str, filename: str, content: bytes) -> None:
+    """A waiver entered by hand with its signed copy: accepted on the spot. A person has it in
+    hand, so there's no review, no automatic check and nothing that blocks it (a missing form
+    template doesn't matter once it's signed). It stays the one on file until a newer signed
+    waiver comes in (best_signed_waiver picks by through date)."""
+    mark_received(db, w, actor, filename, content)
+    w.review_reason = None
+    w.verification = {"status": "entered_by_hand", "note": "Signed copy added by hand; not checked."}
+    for kind in ("statutory_form_missing", "template_missing", "final_exceptions"):
+        upsert_review(db, kind, "waiver", w.id, None, "", False)
+    accept(db, w, actor, note="Signed copy added by hand")
 
 
 def prepare_unconditional_final(db: Session, sc: Subcontract, actor: str) -> Waiver:

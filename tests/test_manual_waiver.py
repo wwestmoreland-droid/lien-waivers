@@ -15,6 +15,11 @@ from tests.test_email_e2e import PDF, mail  # noqa: F401
 from tests.fixtures.sheets import PROJECT
 
 
+def today_signed_back(db):
+    from app.services import today
+    return today.signed_back(db)
+
+
 def delta(db):
     return next(sc for sc in db.scalars(select(Subcontract)) if sc.vendor.name.startswith("Delta")
                 and sc.project.number == PROJECT)
@@ -81,11 +86,68 @@ def test_form_on_the_job_page(mail):
         r = c.post(f"/subs/{sc.id}/manual-waiver", data={
             "wtype": "UNCONDITIONAL_FINAL", "amount": "17935", "through_date": "2026-11-02", "paid_date": "2026-11-02"},
             files={"file": ("signed.pdf", PDF, "application/pdf")}, follow_redirects=False)
-        assert "Signed%20copies%20back" in r.headers["location"]
+        assert "is%20accepted%20with%20its%20signed%20copy" in r.headers["location"]
     db.expire_all()
     manual = db.scalars(select(Waiver).where(Waiver.subcontract_id == sc.id).order_by(Waiver.id.desc())).all()
     final = next(w for w in manual if w.type == WaiverType.UNCONDITIONAL_FINAL.value)
-    assert final.status == WaiverStatus.RECEIVED and final.signed_pdf_path
+    assert final.status == WaiverStatus.ACCEPTED and final.signed_pdf_path  # accepted on the spot
+    assert final.id not in [w.id for w in today_signed_back(db)]  # nothing to review
     assert request_for(db, final).status == "discarded"
     partial = next(w for w in manual if w.type == WaiverType.UNCONDITIONAL_PARTIAL.value and w.payable.is_manual)
     assert partial.amount == Decimal("17935.00")
+
+
+def test_unconditional_final_needs_no_amount_and_shows_on_the_card(mail):
+    db = mail.db
+    sc = delta(db)
+    with TestClient(create_app()) as c:
+        r = c.post(f"/subs/{sc.id}/manual-waiver", data={
+            "wtype": "UNCONDITIONAL_FINAL", "amount": "", "through_date": "2026-11-02", "paid_date": "2026-11-02"},
+            follow_redirects=False)
+        loc = r.headers["location"]
+        assert loc.startswith(f"/jobs/{PROJECT}?open={sc.id}") and loc.endswith(f"#sub-{sc.id}")
+        page = c.get(loc.split("#")[0]).text
+    card = page.split(f'id="sub-{sc.id}"')[1].split('class="subcard"')[0]
+    assert card.lstrip().startswith("open") and "Unconditional final for Delta" in card  # opened, with the result
+    assert "Waivers in progress" in card and "added by hand" in card and "in Ready to send" in card
+    db.expire_all()
+    w = db.scalars(select(Waiver).where(Waiver.subcontract_id == sc.id).order_by(Waiver.id.desc())).first()
+    assert w.type == WaiverType.UNCONDITIONAL_FINAL.value and w.amount is None and w.generated_pdf_path
+    assert request_for(db, w) is not None
+
+
+def test_a_mistake_is_shown_on_the_card_too(mail):
+    db = mail.db
+    sc = delta(db)
+    with TestClient(create_app()) as c:
+        r = c.post(f"/subs/{sc.id}/manual-waiver", data={
+            "wtype": "UNCONDITIONAL_PARTIAL", "amount": "500", "through_date": "2026-11-02", "paid_date": "2026-11-02"},
+            follow_redirects=False)
+        page = c.get(r.headers["location"].split("#")[0]).text
+    card = page.split(f'id="sub-{sc.id}"')[1].split('class="subcard"')[0]
+    assert "Enter the invoice number" in card
+
+
+def test_signed_by_hand_is_the_one_on_file_until_a_newer_one_comes(mail):
+    """Accepted on the spot, even when the automatic check would object, and replaced as the
+    waiver on file only by a newer signed one."""
+    from app.mail import verify
+    db = mail.db
+    sc = delta(db)
+    called = []
+    real = verify.verify
+    verify.verify = lambda *a, **k: called.append(1) or real(*a, **k)
+    try:
+        w = waivers.create_manual_waiver(db, sc, WaiverType.UNCONDITIONAL_PARTIAL, Decimal("10000"),
+                                         date(2026, 10, 1), "ap", invoice_no="A1", paid_date=date(2026, 10, 2))
+        waivers.accept_by_hand(db, w, "ap", "signed.pdf", PDF)
+        db.commit()
+    finally:
+        verify.verify = real
+    assert w.status == WaiverStatus.ACCEPTED and not called
+    assert waivers.best_signed_waiver(db, sc).id == w.id
+    newer = waivers.create_manual_waiver(db, sc, WaiverType.UNCONDITIONAL_PARTIAL, Decimal("12000"),
+                                         date(2026, 11, 1), "ap", invoice_no="A2", paid_date=date(2026, 11, 2))
+    waivers.mark_received(db, newer, "system:mail", "newer.pdf", PDF + b"newer")
+    db.commit()
+    assert waivers.best_signed_waiver(db, sc).id == newer.id  # a more up to date signed waiver takes over

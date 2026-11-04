@@ -204,12 +204,12 @@ def job_detail(request: Request, number: str, db: Session = Depends(get_db), use
         subs.append(r | {"ctc": ctc_by_sub.get(sc.id), "final": waiver_service.current_unconditional_final(db, sc),
                          "checks": waiver_service.final_checks(sc)})
     return render(request, "job_detail.html", user, p=p, rows=rows, unmatched=unmatched, direct=direct, subs=subs,
-                  msg=request.query_params.get("msg", ""),
+                  msg=request.query_params.get("msg", ""), open_sc=request.query_params.get("open", ""),
                   totals={f: sum((getattr(r, f) for r in rows), report.ZERO) for f in report.MONEY_FIELDS})
 
 
 @router.post("/subs/{sc_id}/manual-waiver")
-async def manual_waiver(sc_id: int, wtype: str = Form(...), amount: str = Form(...), through_date: str = Form(...),
+async def manual_waiver(sc_id: int, wtype: str = Form(...), amount: str = Form(""), through_date: str = Form(...),
                         invoice_no: str = Form(""), payment_amount: str = Form(""), paid_date: str = Form(""),
                         note: str = Form(""), back: str = Form(""), file: UploadFile | None = File(None),
                         db: Session = Depends(get_db), user: User = Depends(require_role(*EDITORS))):
@@ -223,7 +223,8 @@ async def manual_waiver(sc_id: int, wtype: str = Form(...), amount: str = Form(.
     sc = db.get(Subcontract, sc_id)
     if not sc:
         raise HTTPException(404)
-    default = f"/jobs/{sc.project.number}"
+    # Back to this sub's card, open, with the result shown on it.
+    default = back = f"/jobs/{sc.project.number}?open={sc.id}#sub-{sc.id}"
 
     def money(v: str) -> Decimal | None:
         v = (v or "").replace("$", "").replace(",", "").strip()
@@ -246,7 +247,7 @@ async def manual_waiver(sc_id: int, wtype: str = Form(...), amount: str = Form(.
         if content:
             from app.db.models import EmailMessage
             from app.mail import outbound
-            waiver_service.mark_received(db, w, user.email, file.filename, content)
+            waiver_service.accept_by_hand(db, w, user.email, file.filename, content)
             db.flush()
             # Already signed: the request email isn't needed.
             outbound.delete_drafts(db, list(db.scalars(select(EmailMessage.id).where(
@@ -255,9 +256,9 @@ async def manual_waiver(sc_id: int, wtype: str = Form(...), amount: str = Form(.
         db.rollback()
         return RedirectResponse(with_msg(safe_back(back, default), str(exc)), status_code=303)
     db.commit()
-    label = f"{WaiverType(w.type).label} for {sc.vendor.name} ({w.amount:,.2f})"
+    label = f"{WaiverType(w.type).label} for {sc.vendor.name}" + (f" (${w.amount:,.2f})" if w.amount is not None else "")
     if content:
-        msg = f"{label} is filed with its signed copy, under Signed copies back on Today."
+        msg = f"{label} is accepted with its signed copy. It's the waiver on file until a newer signed one comes in."
     elif w.status == "needs_review":
         msg = f"{label} was added but is blocked: {w.review_reason}"
     else:
