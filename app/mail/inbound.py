@@ -652,6 +652,7 @@ def receive_waiver_copy(db: Session, w: Waiver, e: EmailMessage, actor: str,
         result["status"] = "issues" if result["problems"] else "looks_good"
     w.verification = result | {"email_id": e.id, "attachment_id": att.id}
     waivers.log_event(db, w, actor, "checked", note=result.get("status"))
+    waivers.apply_signed_values(db, w, actor)
     return True
 
 
@@ -700,6 +701,7 @@ def _receive_with_suppliers(db: Session, w: Waiver, e: EmailMessage, actor: str,
             continue
         w.verification = result | {"email_id": e.id, "attachment_id": att.id}
         waivers.log_event(db, w, actor, "checked", note=result.get("status"))
+        waivers.apply_signed_values(db, w, actor)
         own_filed = True
     return own_filed
 

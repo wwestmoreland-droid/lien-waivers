@@ -496,6 +496,7 @@ def undo_received(db: Session, w: Waiver, actor: str, note: str) -> None:
     if w.status != WaiverStatus.RECEIVED:
         raise ValueError("Only a waiver that came back can be put back to waiting.")
     email_id = (w.verification or {}).get("email_id")
+    restore_requested_values(w)
     log_event(db, w, actor, "not_signed", WaiverStatus.SENT.value, note=note, file=w.signed_pdf_path)
     w.signed_pdf_path = None
     w.received_at = None
@@ -524,6 +525,7 @@ def accept(db: Session, w: Waiver, actor: str, note: str = "") -> None:
 def reject(db: Session, w: Waiver, actor: str, reason: str) -> None:
     if w.status != WaiverStatus.RECEIVED:
         raise ValueError("Only a received waiver can be rejected.")
+    restore_requested_values(w)  # the correction asks for what we asked for
     log_event(db, w, actor, "rejected", WaiverStatus.REJECTED.value, note=reason)
     audit(db, actor, "waiver.rejected", "waiver", w.id, reason=reason)
 
@@ -958,6 +960,86 @@ def create_manual_waiver(db: Session, sc: Subcontract, wtype: WaiverType, amount
     audit(db, actor, "waiver.manual", "subcontract", sc.id, waiver_id=w.id, type=wtype.value, amount=str(amount))
     attach_template_and_render(db, w, actor)
     return w
+
+
+def restore_requested_values(w: Waiver) -> None:
+    """Undo apply_signed_values: back to what we asked for (the copy was sent back, or wasn't
+    the signed copy after all)."""
+    req = (w.verification or {}).get("requested") or {}
+    if "amount" in req:
+        w.amount = Decimal(req["amount"]) if req["amount"] is not None else None
+    if "through_date" in req:
+        w.through_date = date.fromisoformat(req["through_date"]) if req["through_date"] else None
+
+
+def apply_signed_values(db: Session, w: Waiver, actor: str = SYSTEM) -> bool:
+    """Record what the signed copy actually says. The automatic check reads the amount and
+    through date off the document; when they differ from what we asked for (the sub signed a
+    corrected or more recent waiver), the waiver on file takes the document's values, and the
+    review note says what we had asked for. Done once per signed copy. Returns whether it changed."""
+    from app.mail.verify import _to_decimal
+
+    v = dict(w.verification or {})
+    found = v.get("found") or {}
+    if v.get("signed_values_applied") or not found or w.supplier_id:
+        return False
+    if w.status not in (WaiverStatus.RECEIVED, WaiverStatus.ACCEPTED):
+        return False
+    if not found.get("is_lien_waiver") or not found.get("appears_signed") or found.get("is_supplier_waiver"):
+        return False
+    final = WaiverType(w.type).is_final
+    ftype = found.get("waiver_type") or "unknown"
+    if ftype != "unknown" and ftype.endswith("final") != final:
+        return False  # a different kind of waiver: leave it to the reviewer
+    amount = _to_decimal(found.get("amount"))
+    through = None
+    if found.get("through_date") and not final:
+        try:
+            through = date.fromisoformat(found["through_date"])
+        except ValueError:
+            through = None
+    if w.type == WaiverType.UNCONDITIONAL_FINAL.value:
+        amount = None  # carries no amount
+    changes = {}
+    if amount is not None and amount > 0 and amount != w.amount:
+        changes["amount"] = (w.amount, amount)
+    if through is not None and through != w.through_date:
+        changes["through_date"] = (w.through_date, through)
+    v["signed_values_applied"] = True
+    if changes:
+        asked = []
+        if "amount" in changes:
+            old, new = changes["amount"]
+            asked.append(f"${old:,.2f}" if old is not None else "no amount")
+            w.amount = new
+        if "through_date" in changes:
+            old, new = changes["through_date"]
+            asked.append(f"through {old:%b} {old.day}, {old:%Y}" if old else "no through date")
+            w.through_date, w.through_date_is_fallback = new, False
+        says = (f"${w.amount:,.2f}" if w.amount is not None else "") + \
+               (f" through {w.through_date:%b} {w.through_date.day}, {w.through_date:%Y}" if w.through_date else "")
+        lower = "amount" in changes and changes["amount"][0] is not None and changes["amount"][1] < changes["amount"][0]
+        v["requested"] = {k: (str(o) if o is not None else None) for k, (o, _) in changes.items()}
+        v["note"] = (f"Recorded from the signed copy: {says.strip()}. We had asked for {' '.join(asked)}."
+                     + (" That's less than we asked for, so check it before accepting." if lower else ""))
+        # Mismatches with the old request no longer apply; anything else still does.
+        v["problems"] = [x for x in v.get("problems") or []
+                         if not x.startswith("the amount should be") and not x.startswith("the date should be")]
+        if v.get("status") in ("issues", "looks_good"):
+            v["status"] = "issues" if v["problems"] else "looks_good"
+        log_event(db, w, actor, "signed_values", note=v["note"],
+                  **{k: [str(o) if o is not None else None, str(n)] for k, (o, n) in changes.items()})
+    w.verification = v
+    return bool(changes)
+
+
+def apply_signed_values_all(db: Session) -> int:
+    """Catch up signed copies filed before their values were recorded."""
+    n = 0
+    for w in db.scalars(select(Waiver).where(Waiver.supplier_id.is_(None), Waiver.status.in_(
+            (WaiverStatus.RECEIVED.value, WaiverStatus.ACCEPTED.value)))).all():
+        n += apply_signed_values(db, w)
+    return n
 
 
 def accept_by_hand(db: Session, w: Waiver, actor: str, filename: str, content: bytes) -> None:
