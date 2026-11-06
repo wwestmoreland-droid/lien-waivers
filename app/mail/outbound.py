@@ -329,6 +329,28 @@ def draft_reply(db: Session, original: EmailMessage, kind: str, values: dict | N
     return e
 
 
+def team_addresses(project) -> list[str]:
+    """Our project manager and project coordinator on the job (INTAKE)."""
+    return _dedupe([project.pm_email, project.pc_email]) if project is not None else []
+
+
+def cc_team(db: Session, e: EmailMessage, actor: str) -> list[str]:
+    """CC our PM and PC on an unsent email. Returns who was added. Reminders reply to everyone
+    on the thread, so they stay copied from then on."""
+    w = e.waiver
+    project = w.subcontract.project if w is not None else None
+    if project is None and e.project_number:
+        from app.db.models import Project
+        project = db.scalar(select(Project).where(Project.number == e.project_number))
+    mb = e.mailbox
+    have = {a.lower() for a in (e.to_addrs or []) + (e.cc_addrs or [])} | ({mb.email.lower()} if mb else set())
+    added = [a for a in team_addresses(project) if a.lower() not in have]
+    if added:
+        e.cc_addrs = list(e.cc_addrs or []) + added
+        log_email(db, e, actor, "cc_team", added=added)
+    return added
+
+
 def kind_template(kind: str) -> str:
     return {"reminder_1": "reminder_1", "reminder_2": "reminder_2", "correction": "correction",
             "received": "received", "escalation": "escalation", "cancelled": "cancelled",

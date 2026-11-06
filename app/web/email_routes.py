@@ -278,6 +278,20 @@ def reply(eid: int, mode: str = Form("reply"), template: str = Form("reply"), re
     return RedirectResponse(f"/email/{d.id}/edit", status_code=303)
 
 
+@router.post("/email/{eid}/cc-team")
+def cc_team(eid: int, back: str = Form(""), db: Session = Depends(get_db),
+            user: User = Depends(require_role(*EDITORS))):
+    """'CC PM & PC' on an unsent email."""
+    from app.web.nav import safe_back, with_msg
+    e = db.get(EmailMessage, eid)
+    if e is None or e.direction != "out" or e.status not in ("draft", "queued", "failed"):
+        raise HTTPException(404)
+    added = outbound.cc_team(db, e, user.email)
+    db.commit()
+    msg = ("Copied " + ", ".join(added) + ".") if added else "No PM or PC email on this job in INTAKE (or they're already on it)."
+    return RedirectResponse(with_msg(safe_back(back, f"/email/{e.id}/edit"), msg), status_code=303)
+
+
 @router.get("/email-new", response_class=HTMLResponse)
 def new_email(request: Request, waiver_id: int | None = None, db: Session = Depends(get_db),
               user: User = Depends(require_role(*EDITORS))):

@@ -86,6 +86,8 @@
               {% if not ck.last_paid %}<div class="warnbox">No invoice is paid yet, so there's nothing to attach it to.</div>{% endif %}
               {% if ck.ctc and ck.ctc > 0 %}<div class="warnbox">Cost to complete is still {{ ck.ctc|money }}.</div>{% endif %}
               {% if ck.unpaid %}<div class="warnbox">{{ ck.unpaid|length }} invoice{{ 's' if ck.unpaid|length != 1 }} not paid yet: {% for u in ck.unpaid %}{{ u.invoice_no or '(no number)' }} {{ u.amount|money }}{{ ', ' if not loop.last }}{% endfor %}.</div>{% endif %}
+              {% set team = [p.pm_name or p.pm_email, p.pc_name or p.pc_email]|select|list %}{% if team %}
+            <label class="small"><input type="checkbox" name="cc_team" value="1"> CC our PM &amp; PC ({{ team|join(', ') }})</label>{% endif %}
               {% if ck.last_paid %}<div class="row-actions">
                 <button class="btn primary" name="send" value="1">Send it now</button>
                 <button class="btn" name="send" value="">Put it in Ready to send</button>
@@ -103,6 +105,8 @@
             <input type="hidden" name="back" value="{{ back }}">
             <div class="small">One partial waiver for everything paid to {{ sc.vendor.name }} on this job so far{% if r.checks.last_paid %}, through invoice {{ r.checks.last_paid.invoice_no or '(no number)' }} paid {{ r.checks.last_paid.paid_date|fdate }}{% endif %}. It doesn't wait for the monthly send.</div>
             {% if not r.checks.last_paid %}<div class="warnbox">No invoice is paid yet.</div>{% else %}
+            {% set team = [p.pm_name or p.pm_email, p.pc_name or p.pc_email]|select|list %}{% if team %}
+            <label class="small"><input type="checkbox" name="cc_team" value="1"> CC our PM &amp; PC ({{ team|join(', ') }})</label>{% endif %}
             <div class="row-actions">
               <button class="btn primary" name="send" value="1">Send it now</button>
               <button class="btn" name="send" value="">Put it in Ready to send</button>

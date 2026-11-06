@@ -70,6 +70,8 @@ class Project(Base):
     status: Mapped[str | None] = mapped_column(String(100))
     pm_name: Mapped[str | None] = mapped_column(String(255))
     pm_email: Mapped[str | None] = mapped_column(String(255))
+    pc_name: Mapped[str | None] = mapped_column(String(255))   # Project Coordinator (INTAKE)
+    pc_email: Mapped[str | None] = mapped_column(String(255))
     estimator_name: Mapped[str | None] = mapped_column(String(255))
     estimator_email: Mapped[str | None] = mapped_column(String(255))
     # Optional per-project sending mailbox; empty means the active Sender.

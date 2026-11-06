@@ -62,6 +62,7 @@ class ToSend:
     problem: str = ""   # why it can't go out; shown instead of Send
     fix_url: str = ""
     question: str = ""  # for a suggested answer: what the sub wrote
+    team: list = field(default_factory=list)  # our PM / PC on the job, not copied yet
 
     @property
     def sendable(self) -> bool:
@@ -98,6 +99,10 @@ def ready_to_send(db: Session) -> list[ToSend]:
             if w.through_date_is_fallback and not WaiverType(w.type).is_final and e.kind == "waiver_request":
                 notes.append("Through date is a fallback, check it")
         item.note = " · ".join(notes)
+        if w is not None:
+            from app.mail.outbound import team_addresses
+            have = {a.lower() for a in (e.to_addrs or []) + (e.cc_addrs or [])}
+            item.team = [a for a in team_addresses(w.subcontract.project) if a.lower() not in have]
         if e.kind == "answer":
             asked = db.get(EmailMessage, e.reply_to_email_id) if e.reply_to_email_id else None
             if asked is not None:

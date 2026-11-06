@@ -134,6 +134,7 @@ def _project_values(row: SheetRow, source_sheet: str) -> dict | None:
         return None
     number = number[:14]
     pm = v.get("project_manager")
+    pc = v.get("project_coordinator")
     return {
         "number": number,
         "name": text(v.get("project_name")),
@@ -144,6 +145,8 @@ def _project_values(row: SheetRow, source_sheet: str) -> dict | None:
         "owner": text(v.get("owner")),
         "pm_name": text(pm),
         "pm_email": _email(pm),
+        "pc_name": text(pc),
+        "pc_email": _email(pc),
         "estimator_name": text(v.get("estimator")),
         "estimator_email": _email(v.get("estimator")),
         "contract_amount": to_decimal(v.get("contract_amount")),
