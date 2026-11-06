@@ -15,7 +15,7 @@ from app.db.models import SyncRun
 from app.db.session import SessionLocal
 from app.jobs import scheduler
 from app.logs import configure_logging
-from app.web import contacts_routes, email_routes, routes, suppliers_routes, today_routes, waiver_routes
+from app.web import access_routes, contacts_routes, email_routes, routes, suppliers_routes, today_routes, waiver_routes
 from app.web.security import SecurityMiddleware, locked_app, production_problems
 from app.web.templating import templates
 
@@ -50,6 +50,7 @@ def create_app() -> FastAPI:
     app.include_router(email_routes.router)
     app.include_router(contacts_routes.router)
     app.include_router(suppliers_routes.router)
+    app.include_router(access_routes.router)
 
     @app.exception_handler(auth.NotAuthenticated)
     async def _not_auth(request: Request, _exc):
@@ -61,6 +62,11 @@ def create_app() -> FastAPI:
     @app.get("/signed-out", response_class=HTMLResponse)
     def signed_out(request: Request):
         return templates.TemplateResponse(request, "signed_out.html", {"user": None})
+
+    @app.get("/no-access", response_class=HTMLResponse)
+    def no_access(request: Request):
+        info = request.session.get("no_access") or {}
+        return templates.TemplateResponse(request, "no_access.html", {"user": None, "info": info})
 
     @app.get("/health")
     def health():

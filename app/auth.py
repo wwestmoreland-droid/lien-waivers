@@ -18,7 +18,7 @@ router = APIRouter()
 oauth = OAuth()
 _registered = False
 
-ROLES = ("Admin", "AP", "PM")
+from app.services.access import ROLES  # noqa: E402  (one list of roles)
 
 
 def _ensure_registered() -> None:
@@ -87,7 +87,10 @@ async def login(request: Request):
         raise HTTPException(500, "Google sign-in is not configured (GOOGLE_CLIENT_ID).")
     _ensure_registered()
     redirect_uri = s.app_base_url.rstrip("/") + "/auth/callback"
-    return await oauth.google.authorize_redirect(request, redirect_uri, hd=s.allowed_domain, prompt="select_account")
+    hint = request.session.pop("login_hint", None)
+    extra = {"login_hint": hint} if hint else {}
+    return await oauth.google.authorize_redirect(request, redirect_uri, hd=s.allowed_domain, prompt="select_account",
+                                                 **extra)
 
 
 MAILBOX_SCOPES = {
@@ -109,9 +112,32 @@ async def auth_callback(request: Request, db: Session = Depends(get_db)):
         raise HTTPException(403, f"Sign in with your @{domain} account.")
     if purpose and purpose.startswith("mailbox:"):
         return _finish_mailbox(request, db, purpose.split(":", 1)[1], email, token)
-    upsert_user(db, email, info.get("name"))
+    from app.services import access
+    token = request.session.pop("invite_token", None)
+    try:
+        access.sign_in(db, email, info.get("name"), token)
+    except access.NoAccess as exc:
+        request.session.clear()
+        request.session["no_access"] = {"email": email, "message": str(exc)}
+        return RedirectResponse("/no-access", status_code=303)
     request.session["user_email"] = email
     return RedirectResponse(request.session.pop("next", "/"), status_code=303)
+
+
+@router.get("/invite/{token}")
+async def accept_invite(token: str, request: Request, db: Session = Depends(get_db)):
+    """An invite link: remember it, then sign in with Google (the invite's own address)."""
+    from app.services import access
+    inv = access.find_by_token(db, token)
+    if inv is None or not access.live_invite(inv):
+        request.session["no_access"] = {"email": inv.email if inv else "",
+                                        "message": "That invite link has expired, was already used or was "
+                                                   "withdrawn. Ask for a new one."}
+        return RedirectResponse("/no-access", status_code=303)
+    request.session.clear()
+    request.session["invite_token"] = token
+    request.session["login_hint"] = inv.email
+    return RedirectResponse("/login", status_code=303)
 
 
 @router.get("/logout")

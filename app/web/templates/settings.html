@@ -63,18 +63,9 @@
 </div>
 
 <div class="panel" id="users">
-  <h2 style="margin-top:0">Users</h2>
-  <p class="small muted">Anyone with a @buildoutpros.com Google account can sign in. New users start as PM (read only); an Admin changes the role here.</p>
-  <div class="table-wrap"><table>
-    <tr><th>Email</th><th>Name</th><th>Role</th><th>Last sign-in</th></tr>
-    {% for u in users %}
-    <tr><td>{{ u.email }}</td><td>{{ u.name or '' }}</td>
-      <td>{% if admin and u.id != user.id %}
-        <form class="inline" method="post" action="/settings/users/{{ u.id }}/role"><select name="role" onchange="this.form.submit()">{% for r in roles %}<option {{ 'selected' if r == u.role }}>{{ r }}</option>{% endfor %}</select></form>
-        {% else %}{{ u.role }}{% endif %}</td>
-      <td class="small">{{ u.last_login_at|fdate }}</td></tr>
-    {% endfor %}
-  </table></div>
+  <h2 style="margin-top:0">People and access</h2>
+  <p class="small muted">{{ users|selectattr('is_active')|list|length }} people can sign in. Sign-in is by invite only.
+    {% if admin %}<a class="btn sm" href="/settings/people">Invite people, change roles, remove access</a>{% endif %}</p>
 </div>
 
 <div class="panel">

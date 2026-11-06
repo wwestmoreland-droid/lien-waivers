@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}People and access{% endblock %}
+{% block content %}
+<p class="small"><a href="/settings">← Settings</a></p>
+<h1>People and access</h1>
+<p class="sub">Only people you invite (and anyone you approve) can sign in, with their @buildoutpros.com Google account.
+Removing someone signs them out on their next click.</p>
+{% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
+
+<div class="panel" id="invite">
+  <h2 style="margin-top:0">Invite someone</h2>
+  {% if link %}<div class="warnbox small">Invite link (works once, for that address only, for {{ days }} days):
+    <input type="text" readonly value="{{ link }}" style="width:100%" onclick="this.select()"></div>{% endif %}
+  <form method="post" action="/settings/people/invite" class="manual-form">
+    <label>Email <input name="email" type="text" placeholder="name@buildoutpros.com" required></label>
+    <label>Name <input name="name" placeholder="optional"></label>
+    <label>Role <select name="role" required>
+      {% for r in roles|reverse %}<option value="{{ r }}" {{ 'selected' if r == 'PM' }}>{{ r }}</option>{% endfor %}
+    </select></label>
+    <label class="small"><input type="checkbox" name="send" value="1" checked> Email them the invite from the connected mailbox</label>
+    <div class="row-actions"><button class="btn primary">Create invite</button></div>
+  </form>
+</div>
+
+{% if requests %}
+<div class="panel" id="requests">
+  <h2 style="margin-top:0">Asked for access <span class="count">{{ requests|length }}</span></h2>
+  <p class="small muted">They signed in without an invite. Approve to send them one.</p>
+  <div class="table-wrap"><table>
+    <tr><th>Who</th><th>When</th><th></th></tr>
+    {% for r in requests %}
+    <tr><td>{{ r.name or '' }} <span class="small muted">{{ r.email }}</span></td><td class="small">{{ r.created_at|fdate }}</td>
+      <td><form class="inline" method="post" action="/settings/people/requests/{{ r.id }}/approve">
+          <select name="role">{% for x in roles|reverse %}<option {{ 'selected' if x == 'PM' }}>{{ x }}</option>{% endfor %}</select>
+          <input type="hidden" name="send" value="1"><button class="btn sm primary">Approve and send invite</button></form>
+        <form class="inline" method="post" action="/settings/people/invites/{{ r.id }}/revoke"><button class="btn sm">Dismiss</button></form></td></tr>
+    {% endfor %}
+  </table></div>
+</div>
+{% endif %}
+
+{% if invites %}
+<div class="panel" id="pending">
+  <h2 style="margin-top:0">Invites not used yet</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Email</th><th>Role</th><th>Sent</th><th>Expires</th><th></th></tr>
+    {% for i in invites %}
+    <tr><td>{{ i.name or '' }} <span class="small muted">{{ i.email }}</span></td><td>{{ i.role }}</td>
+      <td class="small">{{ (i.emailed_at or i.created_at)|fdate }}{% if not i.emailed_at %} (link only){% endif %}</td>
+      <td class="small">{% if live(i) %}{{ i.expires_at|fdate }}{% else %}<span class="badge warn">expired</span>{% endif %}</td>
+      <td><form class="inline" method="post" action="/settings/people/invite"><input type="hidden" name="email" value="{{ i.email }}">
+          <input type="hidden" name="name" value="{{ i.name or '' }}"><input type="hidden" name="role" value="{{ i.role }}">
+          <input type="hidden" name="send" value="1"><button class="btn sm">Send a new link</button></form>
+        <form class="inline" method="post" action="/settings/people/invites/{{ i.id }}/revoke"><button class="btn sm">Withdraw</button></form></td></tr>
+    {% endfor %}
+  </table></div>
+</div>
+{% endif %}
+
+<div class="panel" id="users">
+  <h2 style="margin-top:0">People with access</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Who</th><th>Role</th><th>Last sign-in</th><th></th></tr>
+    {% for u in users %}
+    <tr class="{{ 'muted' if not u.is_active }}">
+      <td>{{ u.name or '' }} <span class="small muted">{{ u.email }}</span>{% if u.id == user.id %} <span class="badge">you</span>{% endif %}</td>
+      <td>{% if u.is_active and u.id != user.id %}
+        <form class="inline" method="post" action="/settings/people/{{ u.id }}/role"><select name="role" onchange="this.form.submit()">
+          {% for r in roles %}<option {{ 'selected' if r == u.role }}>{{ r }}</option>{% endfor %}</select></form>
+        {% else %}{{ u.role }}{% endif %}</td>
+      <td class="small">{{ u.last_login_at|fdate }}</td>
+      <td>{% if u.id != user.id %}{% if u.is_active %}
+        <form class="inline" method="post" action="/settings/people/{{ u.id }}/remove" onsubmit="return confirm('Remove access for {{ u.email }}? They are signed out on their next click. Their history stays.')"><button class="btn sm danger">Remove access</button></form>
+        {% else %}<span class="badge bad">access removed</span>
+        <form class="inline" method="post" action="/settings/people/{{ u.id }}/restore"><button class="btn sm">Restore ({{ u.role }})</button></form>{% endif %}{% endif %}</td></tr>
+    {% endfor %}
+  </table></div>
+</div>
+
+<div class="panel" id="roles">
+  <h2 style="margin-top:0">What each role can see and do</h2>
+  <div class="table-wrap"><table>
+    {% for r in roles|reverse %}<tr><td><strong>{{ r }}</strong></td><td class="small">{{ role_info[r] }}</td></tr>{% endfor %}
+  </table></div>
+  <p class="small muted">Only the mailbox owner can open "All mail" (the whole connected inbox), whatever their role.</p>
+</div>
+{% endblock %}

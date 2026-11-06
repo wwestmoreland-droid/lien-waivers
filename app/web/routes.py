@@ -700,10 +700,17 @@ def delete_direct(did: int, db: Session = Depends(get_db), user: User = Depends(
 @router.post("/settings/users/{uid}/role")
 def set_role(uid: int, role: str = Form(...), db: Session = Depends(get_db),
              user: User = Depends(require_role("Admin"))):
+    """Kept for old links; the People page does this now (same rules)."""
+    from urllib.parse import quote
+
+    from app.services import access
     u = db.get(User, uid)
-    if not u or role not in ROLES:
+    if not u:
         raise HTTPException(400)
-    audit(db, user.email, "user.role_changed", "user", u.email, old=u.role, new=role)
-    u.role = role
+    try:
+        access.set_role(db, u, role, user)
+    except ValueError as exc:
+        db.rollback()
+        return RedirectResponse("/settings/people?msg=" + quote(str(exc)), status_code=303)
     db.commit()
-    return RedirectResponse("/settings#users", status_code=303)
+    return RedirectResponse("/settings/people#users", status_code=303)

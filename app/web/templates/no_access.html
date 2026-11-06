@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}No access yet{% endblock %}
+{% block content %}
+<div class="panel" style="max-width:520px;margin:60px auto;text-align:center">
+  <h1>Buildout Pros · Lien Waivers</h1>
+  {% if info.email %}<p class="small muted">Signed in with Google as {{ info.email }}.</p>{% endif %}
+  <p>{{ info.message or "You don't have access yet. Ask an Admin for an invite." }}</p>
+  <a class="btn" href="/login">Try a different account</a>
+</div>
+{% endblock %}

@@ -139,11 +139,18 @@ def email_center(request: Request, view: str = "inbox", project: str = "", vendo
                      "q": q}, statuses=list(WaiverStatus))
 
 
+def owns_mailbox(user: User, mb) -> bool:
+    return (user.email or "").lower() == (mb.email or "").lower()
+
+
 @router.get("/email/all", response_class=HTMLResponse)
 def all_mail(request: Request, q: str = "", db: Session = Depends(get_db), user: User = Depends(current_user)):
-    """The whole Sender mailbox, read live from Gmail (nothing is stored)."""
+    """The whole Sender mailbox, read live from Gmail (nothing is stored). Only the mailbox's
+    owner can open it: it's their whole inbox, personal mail included."""
     mb = mailboxes.active_sender(db)
     rows, error = [], None
+    if mb is not None and not owns_mailbox(user, mb):
+        raise HTTPException(403, f"Only {mb.email} can see that mailbox's other mail.")
     if mb is None:
         error = "No Sender mailbox is connected."
     else:
@@ -165,6 +172,8 @@ def import_live(message_id: str, db: Session = Depends(get_db), user: User = Dep
     mb = mailboxes.active_sender(db)
     if mb is None:
         raise HTTPException(400, "No Sender mailbox")
+    if not owns_mailbox(user, mb):
+        raise HTTPException(403, f"Only {mb.email} can bring that mailbox's other mail into the app.")
     existing = db.scalar(select(EmailMessage).where(EmailMessage.provider_message_id == message_id))
     if existing:
         return RedirectResponse(f"/email/{existing.id}", status_code=303)
