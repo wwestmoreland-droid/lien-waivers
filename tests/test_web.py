@@ -154,8 +154,11 @@ def test_email_pages(client, db, source):
         mailboxes.connect(db, "contracts@buildoutpros.com", "sender", "tok", "gmail.modify gmail.send", "admin")
         db.commit()
         for path in ("/email", "/email?view=outbox", "/email?view=sent", "/settings/mailboxes", "/settings/email",
-                     "/digest", "/queues", "/email/all"):
+                     "/digest", "/queues"):
             assert client.get(path).status_code == 200, path
+        # The whole inbox is for the mailbox's owner only (the test user isn't contracts@).
+        assert client.get("/email/all").status_code == 403
+        assert "see all contracts@" not in client.get("/email").text
 
         source.row("ar_ap", 1003).values["paid_date"] = "2026-10-22"
         sync_runner.sync_now("test")

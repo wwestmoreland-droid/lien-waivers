@@ -7,7 +7,7 @@
     <h1>Email</h1>
     <p class="sub">{% if sender %}Sending from {{ sender.email }}.{% else %}<strong>No Sender mailbox connected.</strong> <a href="/settings/mailboxes">Connect one</a>.{% endif %}
       This is only for lien waiver mail: replies to waiver requests, signed copies, bounces, and anything mentioning a waiver.
-      A sub's other mail (RFIs, drawings, invoices) stays in Gmail; <a href="/email/all">see all {{ sender.email if sender else 'mailbox' }} mail</a>.
+      A sub's other mail (RFIs, drawings, invoices) stays in Gmail{% if sender and sender.email|lower == user.email|lower %}; <a href="/email/all">see all {{ sender.email }} mail</a>{% endif %}.
       "Unmatched" means waiver mail the app couldn't tie to one waiver: open it and link it.
       {% if counts.other %}<a href="/email?view=other">{{ counts.other }} email{{ 's' if counts.other != 1 }} set aside as not about waivers.</a>{% endif %}</p>
   </div>

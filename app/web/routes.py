@@ -267,8 +267,8 @@ async def manual_waiver(sc_id: int, wtype: str = Form(...), amount: str = Form("
 
 
 @router.post("/subs/{sc_id}/latest-partial")
-def latest_partial(sc_id: int, send: str = Form(""), back: str = Form(""), db: Session = Depends(get_db),
-                   user: User = Depends(require_role(*EDITORS))):
+def latest_partial(sc_id: int, send: str = Form(""), back: str = Form(""), cc_team: str = Form(""),
+                   db: Session = Depends(get_db), user: User = Depends(require_role(*EDITORS))):
     """'Send latest partial' next to a sub: one partial for everything paid so far, now."""
     from app.db.models import EmailMessage
     from app.mail import outbound
@@ -286,6 +286,9 @@ def latest_partial(sc_id: int, send: str = Form(""), back: str = Form(""), db: S
     label = f"Partial for {sc.vendor.name} ({w.amount:,.2f}, everything paid so far)"
     e = db.scalar(select(EmailMessage).where(EmailMessage.waiver_id == w.id, EmailMessage.kind == "waiver_request",
                                              EmailMessage.status.in_(("draft", "queued", "failed"))))
+    if e is not None and cc_team:
+        outbound.cc_team(db, e, user.email)
+        db.commit()
     if w.status == "needs_review":
         msg = f"{label} is blocked: {w.review_reason}"
     elif send != "1" or e is None:
@@ -301,8 +304,8 @@ def latest_partial(sc_id: int, send: str = Form(""), back: str = Form(""), db: S
 
 
 @router.post("/subs/{sc_id}/unconditional-final")
-def unconditional_final(sc_id: int, send: str = Form(""), back: str = Form(""), db: Session = Depends(get_db),
-                        user: User = Depends(require_role(*EDITORS))):
+def unconditional_final(sc_id: int, send: str = Form(""), back: str = Form(""), cc_team: str = Form(""),
+                        db: Session = Depends(get_db), user: User = Depends(require_role(*EDITORS))):
     """'Send unconditional final' next to a sub: create it, then send it now or leave it in Ready to send."""
     from app.db.models import EmailMessage
     from app.mail import outbound
@@ -323,6 +326,9 @@ def unconditional_final(sc_id: int, send: str = Form(""), back: str = Form(""), 
     else:
         e = db.scalar(select(EmailMessage).where(EmailMessage.waiver_id == w.id, EmailMessage.kind == "waiver_request",
                                                  EmailMessage.status.in_(("draft", "queued", "failed"))))
+        if e is not None and cc_team:
+            outbound.cc_team(db, e, user.email)
+            db.commit()
         if send != "1" or e is None:
             msg = f"Unconditional final for {name} is ready under Ready to send on Today."
         else:
@@ -694,10 +700,17 @@ def delete_direct(did: int, db: Session = Depends(get_db), user: User = Depends(
 @router.post("/settings/users/{uid}/role")
 def set_role(uid: int, role: str = Form(...), db: Session = Depends(get_db),
              user: User = Depends(require_role("Admin"))):
+    """Kept for old links; the People page does this now (same rules)."""
+    from urllib.parse import quote
+
+    from app.services import access
     u = db.get(User, uid)
-    if not u or role not in ROLES:
+    if not u:
         raise HTTPException(400)
-    audit(db, user.email, "user.role_changed", "user", u.email, old=u.role, new=role)
-    u.role = role
+    try:
+        access.set_role(db, u, role, user)
+    except ValueError as exc:
+        db.rollback()
+        return RedirectResponse("/settings/people?msg=" + quote(str(exc)), status_code=303)
     db.commit()
-    return RedirectResponse("/settings#users", status_code=303)
+    return RedirectResponse("/settings/people#users", status_code=303)

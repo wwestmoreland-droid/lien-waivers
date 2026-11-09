@@ -50,6 +50,26 @@ class User(Base):
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+
+
+class Invite(Base):
+    """An Admin's invitation for one @buildoutpros.com address, with the role it grants. The
+    link carries a random token; only its hash is stored. Someone who signs in without one
+    leaves a request here (status "requested") for an Admin to approve."""
+
+    __tablename__ = "invites"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email: Mapped[str] = mapped_column(String(255), index=True)
+    name: Mapped[str | None] = mapped_column(String(255))
+    role: Mapped[str] = mapped_column(String(20), default="PM")
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending / accepted / revoked / requested / dismissed
+    token_hash: Mapped[str | None] = mapped_column(String(64), unique=True)
+    created_by: Mapped[str | None] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    emailed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
 class AppSetting(Base):
     __tablename__ = "app_settings"
     key: Mapped[str] = mapped_column(String(100), primary_key=True)
@@ -70,6 +90,8 @@ class Project(Base):
     status: Mapped[str | None] = mapped_column(String(100))
     pm_name: Mapped[str | None] = mapped_column(String(255))
     pm_email: Mapped[str | None] = mapped_column(String(255))
+    pc_name: Mapped[str | None] = mapped_column(String(255))   # Project Coordinator (INTAKE)
+    pc_email: Mapped[str | None] = mapped_column(String(255))
     estimator_name: Mapped[str | None] = mapped_column(String(255))
     estimator_email: Mapped[str | None] = mapped_column(String(255))
     # Optional per-project sending mailbox; empty means the active Sender.

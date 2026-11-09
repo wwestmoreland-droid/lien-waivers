@@ -21,6 +21,7 @@ def intake():
     return [
         _row(1, project_number=PROJECT, project_name=PROJECT_NAME, project_status="8 Construction",
              project_manager={"name": "Pat Manager", "email": "pmanager@buildoutpros.com"},
+             project_coordinator={"name": "Casey Coordinator", "email": "pc@buildoutpros.com"},
              state="IL", complete_address="100 Main St, Palatine, IL, 60067",
              client_company="Studio Co Holdings", contract_amount=950000.0),
         _row(2, project_number=OTHER_PROJECT, project_name=OTHER_NAME,

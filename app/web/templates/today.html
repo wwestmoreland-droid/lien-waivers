@@ -61,6 +61,7 @@
       {% else %}
         <span class="problem">{{ t.problem }}</span> <a class="btn" href="{{ t.fix_url }}">Fix</a>
       {% endif %}
+      {% if t.team %}<form method="post" action="/email/{{ e.id }}/cc-team" title="Copy {{ t.team|join(', ') }}"><input type="hidden" name="back" value="{{ back }}"><button class="btn">CC PM &amp; PC</button></form>{% endif %}
       <a class="small" href="/email/{{ e.id }}/edit">Edit email</a>
     </div>
   </div>
