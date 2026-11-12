@@ -24,7 +24,7 @@ SCHEMA = {
     "additionalProperties": False,
     "required": ["is_lien_waiver", "appears_signed", "notary_completed", "waiver_type", "amount",
                  "through_date", "project_name_on_form", "project_matches", "signer_company",
-                 "is_supplier_waiver", "issues", "summary"],
+                 "is_supplier_waiver", "upright_turn", "issues", "summary"],
     "properties": {
         "is_lien_waiver": {"type": "boolean"},
         "appears_signed": {"type": "boolean"},
@@ -39,6 +39,9 @@ SCHEMA = {
         "signer_company": {"type": ["string", "null"]},
         "is_supplier_waiver": {"type": "boolean",
                                "description": "Signed by a supplier of the sub rather than the sub itself"},
+        "upright_turn": {"type": "string", "enum": ["0", "90", "180", "270"],
+                         "description": "Degrees clockwise to turn the first page so its text reads upright "
+                                        "(0 when it already does)"},
         "issues": {"type": "array", "items": {"type": "string"}},
         "summary": {"type": "string"},
     },

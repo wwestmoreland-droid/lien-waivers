@@ -36,7 +36,7 @@ def our_pdf_digests(db: Session, w: Waiver) -> set[str]:
     """Every version of the PDF we generated for this waiver."""
     out = set()
     for f in db.scalars(select(StoredFile).where(StoredFile.key.like(f"waivers/{w.id}/%"))):
-        if "/signed-" not in f.key:
+        if "/signed-" not in f.key and "/original-" not in f.key:  # copies the sub sent aren't ours
             out.add(_digest(f.content))
     return out
 

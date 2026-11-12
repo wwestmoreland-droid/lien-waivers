@@ -423,6 +423,7 @@ def file_supplier_waiver(db: Session, sub_waiver: Waiver, s: Supplier, att: Emai
     problems = compare_supplier(sub_waiver, found)
     w.verification = result | {"problems": problems, "status": "issues" if problems else "looks_good",
                                "email_id": att.email_id}
+    waivers.straighten(db, w, found.get("upright_turn"), actor)
     recheck_finals(db, sub_waiver.subcontract)
     return w
 

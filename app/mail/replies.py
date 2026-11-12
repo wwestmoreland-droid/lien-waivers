@@ -110,7 +110,8 @@ def same_as_sent_back(db: Session, w: Waiver, files: list[EmailAttachment]) -> b
         return False
     old = db.scalar(select(WaiverEvent).where(WaiverEvent.waiver_id == w.id, WaiverEvent.action == "received")
                     .order_by(WaiverEvent.id.desc()))
-    path = w.signed_pdf_path
+    from app.waivers.service import original_file
+    path = original_file(db, w) if w.signed_pdf_path else None  # the file as sent, not the Letter copy
     if not path and old is not None and old.details:
         return False
     rejected = filestore.read(db, path) if path else None
@@ -235,8 +236,13 @@ def _filed_ids(db: Session, w: Waiver, e: EmailMessage) -> set[int]:
         if (sw.verification or {}).get("attachment_id"):
             ids.add(sw.verification["attachment_id"])
     if not ids and w.signed_pdf_path:
+        from pathlib import Path
+
+        from app.waivers.service import original_file
+        filed = original_file(db, w) or w.signed_pdf_path
         for a in e.attachments:
-            if a.filename and w.signed_pdf_path.endswith("".join(ch for ch in a.filename if ch.isalnum() or ch in "._- ")):
+            safe = "".join(ch for ch in a.filename or "" if ch.isalnum() or ch in "._- ")
+            if safe and (filed.endswith(safe) or Path(w.signed_pdf_path).stem.endswith(Path(safe).stem)):
                 ids.add(a.id)
                 break
     return ids
