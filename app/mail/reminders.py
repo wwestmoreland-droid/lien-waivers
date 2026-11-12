@@ -1,5 +1,5 @@
 """Daily reminders (8:00 AM Central, weekdays only). By default: day 7 and day 10 to the sub,
-day 13 escalation to our PM (checks are mailed, so subs get time to receive them). The days
+day 13 last follow-up copying the sub's other contacts (checks are mailed, so subs get time to receive them). The days
 are set on Settings > Email. Days are calendar days from the request; anything that comes due
 on a weekend goes out Monday morning.
 
@@ -49,6 +49,18 @@ def _clock_start(db: Session, w: Waiver) -> datetime:
     return w.sent_at
 
 
+def _retire_internal_escalations(db: Session) -> None:
+    """Unsent escalations from before they went to the sub (addressed to our own PM) are
+    discarded, so the new last follow-up is drafted in their place."""
+    ours = "@" + get_settings().allowed_domain
+    for e in db.scalars(select(EmailMessage).where(EmailMessage.kind == "escalation",
+                                                   EmailMessage.status.in_(("draft", "queued", "failed")))):
+        if e.to_addrs and all(a.lower().endswith(ours) for a in e.to_addrs):
+            e.status = "discarded"
+            outbound.log_email(db, e, "system:reminders", "discarded",
+                               reason="escalations now go to the sub's other contacts")
+
+
 def run(db: Session, today: date | None = None) -> dict:
     today = today or datetime.now(ZoneInfo(get_settings().timezone)).date()
     stats = {"reminder_1": 0, "reminder_2": 0, "escalation": 0, "supplier_list_reminder": 0}
@@ -56,6 +68,7 @@ def run(db: Session, today: date | None = None) -> dict:
         return stats
     reminder_days = sorted(int(d) for d in get_setting(db, "reminder_days"))[:2]
     escalation_day = int(get_setting(db, "escalation_day"))
+    _retire_internal_escalations(db)
     waivers = db.scalars(select(Waiver).join(Subcontract).join(Project).where(
         Project.is_tracked.is_(True), Waiver.status.in_((WaiverStatus.SENT.value, WaiverStatus.REJECTED.value)),
         Waiver.sent_at.is_not(None), Waiver.supplier_id.is_(None)))

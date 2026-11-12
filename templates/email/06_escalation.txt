@@ -1,8 +1,10 @@
-Subject: Waiver still out – {vendor} – {project_name}
+Subject: Lien waiver still needed – {project_name} – {amount} [LW-{id}]
 
-{pm_first_name},
+Hi {first_name},
 
-{vendor} hasn't sent back the {waiver_type} for {project_name} ({amount}). We asked on {requested_date} and followed up twice.
-[if gate] Their payment is on hold.
+We still need the signed {waiver_type} for {project_name} ({amount}). We first asked on {requested_date} and followed up twice. It's attached again.
 
-Their billing contact is {billing_name}, {billing_email}, {billing_phone}. Can you give them a call?
+I've copied others at {vendor} in case it went to the wrong person. Can someone sign it, get it notarized, and send it back?
+
+Thanks,
+{signature}

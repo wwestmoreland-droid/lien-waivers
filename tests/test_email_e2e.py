@@ -203,8 +203,11 @@ def test_reminders_and_escalation(mail):
     assert reminders.run(db, date(2026, 10, 13))["escalation"] == 0
     reminders.run(db, date(2026, 10, 14))  # day 13
     esc = db.scalar(select(EmailMessage).where(EmailMessage.kind == "escalation"))
-    assert esc.to_addrs == ["pmanager@buildoutpros.com"] and esc.body_text.startswith("Pat,")
-    assert "Their billing contact is Dana AP, ap@deltafire.com." in esc.body_text  # empty phone left out
+    # To the sub, on the waiver's thread, with the waiver again and their other contacts copied.
+    assert esc.provider_thread_id == e.provider_thread_id and esc.attachments
+    assert "ap@deltafire.com" in esc.to_addrs and {"pm@deltafire.com", "est@deltafire.com"} <= set(esc.cc_addrs)
+    assert not [a for a in esc.to_addrs + esc.cc_addrs if a.endswith("@buildoutpros.com")]  # not our PM
+    assert esc.body_text.startswith("Hi Dana,") and "copied others at Delta Fire" in esc.body_text
 
 
 def test_reminder_days_are_a_setting(mail):

@@ -28,7 +28,7 @@ KIND_LABELS = {
     "waiver_request": "Waiver request",
     "reminder_1": "Reminder",
     "reminder_2": "Second reminder",
-    "escalation": "Escalation to PM",
+    "escalation": "Last follow-up (sub's other contacts copied)",
     "correction": "Needs correction",
     "received": "Received",
     "supplier_list": "Supplier list request",
@@ -357,17 +357,40 @@ def kind_template(kind: str) -> str:
             "supplier_list_reminder": "supplier_list_reminder"}[kind]
 
 
+def sub_other_contacts(db: Session, w: Waiver) -> list[str]:
+    """Everyone on file at the sub's company: their PM, estimator, foreman and billing contact
+    from All Subcontracts, plus confirmed contacts. Never anyone at our own company."""
+    sc, v = w.subcontract, w.subcontract.vendor
+    ours = "@" + get_settings().allowed_domain
+    addrs = [sc.billing_email, v.waiver_email, v.billing_email, sc.pm_email, sc.estimator_email, sc.foreman_email]
+    addrs += list(db.scalars(select(Contact.email).where(
+        Contact.vendor_id == v.id, Contact.status == "confirmed", Contact.is_active.is_not(False))))
+    bounced = (v.last_bounce_address or "").lower()
+    return [a for a in _dedupe(addrs) if not a.lower().endswith(ours) and a.lower() != bounced]
+
+
 def draft_escalation(db: Session, w: Waiver, actor: str = "system:mail") -> EmailMessage | None:
-    project = w.subcontract.project
-    to = _dedupe([project.pm_email])
-    cc = _dedupe([project.estimator_email], exclude=to)
-    if not to:
-        to = _dedupe([get_setting(db, "default_reviewer_email")])
-    mb = mailboxes.sender_for_project(db, project)
-    r = templates.render(db, "escalation", merge_values(db, w, mb))
-    return _new_email(db, kind="escalation", waiver_id=w.id, project_number=project.number,
-                      vendor_id=w.subcontract.vendor_id, mailbox_id=mb.id if mb else None, to_addrs=to, cc_addrs=cc,
-                      subject=r.subject, body_text=r.body, created_by=actor)
+    """The last follow-up (day 13 by default): to the sub, on the waiver's thread, with the waiver
+    attached again and everyone else on file at the sub's company copied in. Nobody at our
+    company is added."""
+    extra = sub_other_contacts(db, w)
+    root = thread_root(db, w)
+    if root is not None:
+        e = draft_reply(db, root, "escalation", actor=actor, attach_waiver=True, everyone=True)
+    else:  # sent outside the app: a fresh email
+        mb = mailboxes.sender_for_project(db, w.subcontract.project)
+        r = templates.render(db, "escalation", merge_values(db, w, mb))
+        to, cc = recipients_for(w)
+        e = _new_email(db, kind="escalation", waiver_id=w.id, project_number=w.subcontract.project.number,
+                       vendor_id=w.subcontract.vendor_id, mailbox_id=mb.id if mb else None, to_addrs=to,
+                       cc_addrs=cc, subject=r.subject, body_text=r.body, token=token_for(w), created_by=actor)
+        _attach_waiver_pdf(db, e, w)
+    have = {a.lower() for a in (e.to_addrs or []) + (e.cc_addrs or [])}
+    if not e.to_addrs and extra:
+        e.to_addrs, extra = extra[:1], extra[1:]
+        have.add(e.to_addrs[0].lower())
+    e.cc_addrs = list(e.cc_addrs or []) + [a for a in extra if a.lower() not in have]
+    return e
 
 
 def draft_free(db: Session, actor: str, to: list[str], cc: list[str], subject: str, body: str,
