@@ -29,7 +29,7 @@ TEMPLATES = {
     "unconditional_final": ("03_unconditional_final.txt", "Unconditional final waiver (after final payment)"),
     "reminder_1": ("04_reminder_1.txt", "First reminder (day 7 by default)"),
     "reminder_2": ("05_reminder_2.txt", "Second reminder (day 10 by default)"),
-    "escalation": ("06_escalation.txt", "Escalation to PM and estimator (day 13 by default, internal)"),
+    "escalation": ("06_escalation.txt", "Last follow-up to the sub, copying their other contacts (day 13 by default)"),
     "correction": ("07_correction.txt", "Needs correction"),
     "received": ("08_received.txt", "Received (optional)"),
     "supplier_list": ("09_supplier_list.txt", "Supplier list request (major trades)"),
@@ -87,8 +87,8 @@ def template_text(db: Session | None, key: str) -> str:
     if db is not None:
         from app.services.settings_store import get_setting
         override = (get_setting(db, "email_templates") or {}).get(key)
-        if override:
-            return override
+        if override and not (key == "escalation" and "{pm_first_name}" in override):
+            return override  # (an old escalation written to our own PM no longer fits: the default is used)
     return (EMAIL_DIR / TEMPLATES[key][0]).read_text()
 
 

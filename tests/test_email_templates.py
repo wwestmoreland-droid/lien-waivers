@@ -59,10 +59,9 @@ def test_received_without_name():
 
 
 def test_escalation_greeting():
-    r = render_text(file_text("escalation"), dict(VALUES, pm_first_name="Pat", vendor="Delta Fire",
+    r = render_text(file_text("escalation"), dict(VALUES, vendor="Delta Fire",
                                                   waiver_type="unconditional partial lien waiver",
-                                                  requested_date=date(2026, 10, 1), billing_name="Dana AP",
-                                                  billing_email="ap@deltafire.com", billing_phone="555-0100"))
-    assert r.subject == "Waiver still out – Delta Fire – Studio Co - Palatine, IL"
-    assert r.body.startswith("Pat,\n")
-    assert "We asked on Oct 1, 2026" in r.body
+                                                  requested_date=date(2026, 10, 1)))
+    assert r.subject.startswith("Lien waiver still needed – Studio Co - Palatine, IL")
+    assert r.body.startswith("Hi ") and "We first asked on Oct 1, 2026" in r.body
+    assert "copied others at Delta Fire" in r.body

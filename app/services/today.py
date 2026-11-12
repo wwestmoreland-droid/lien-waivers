@@ -325,8 +325,8 @@ def next_step(db: Session, w: Waiver, today: date | None = None) -> str:
         if count <= n:
             return f"{labels[n]} {_when(_due(sent, day), today)}"
     if not w.escalated_at:
-        return f"PM gets flagged {_when(_due(sent, esc), today)}"
-    return "PM has been flagged."
+        return f"Their other contacts get copied {_when(_due(sent, esc), today)}"
+    return "Their other contacts have been copied."
 
 
 def waiting_lists(db: Session) -> list[Subcontract]:
