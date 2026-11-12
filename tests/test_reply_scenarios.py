@@ -47,7 +47,9 @@ def asked(db, kind):
 
 
 def filed_bytes(db, w):
-    return filestore.read(db, W(db, w).signed_pdf_path)
+    """The signed copy as the sub sent it (the copy on record is an 8.5 x 11 PDF made from it)."""
+    from app.waivers.service import original_file
+    return filestore.read(db, original_file(db, W(db, w)))
 
 
 def second_delta_waiver(db):
@@ -100,8 +102,8 @@ def test_iphone_heic_becomes_a_jpeg(mail):
     w, e = send_request(mail)
     reply(mail, e, attachments=[InAttachment("IMG_0001.HEIC", "image/heic", buf.getvalue())])
     ww = W(db, w)
-    assert ww.status == WaiverStatus.RECEIVED and ww.signed_pdf_path.endswith(".jpg")
-    assert filed_bytes(db, w)[:2] == b"\xff\xd8"
+    assert ww.status == WaiverStatus.RECEIVED and ww.signed_pdf_path.endswith(".pdf")
+    assert filed_bytes(db, w)[:2] == b"\xff\xd8"  # kept as the JPEG it was converted to
 
 
 def test_two_signed_files_one_filed_and_a_question(mail):

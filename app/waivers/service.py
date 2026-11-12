@@ -15,7 +15,7 @@ from app.config import get_settings
 from app.ctc.engine import compute_for_subcontract, order_key
 from app.db.models import Payable, PayableEvent, Project, Subcontract, Waiver, WaiverEvent
 from app.matching.normalize import state_from_project_number
-from app.services import filestore
+from app.services import filestore, paper
 from app.services.audit import audit
 from app.services.reviews import upsert_review
 from app.services.settings_store import get_setting
@@ -484,11 +484,18 @@ def mark_received(db: Session, w: Waiver, actor: str, filename: str, content: by
     folder = waiver_dir() / str(w.id)
     folder.mkdir(parents=True, exist_ok=True)
     safe = "".join(ch for ch in Path(filename).name if ch.isalnum() or ch in "._- ") or "signed.pdf"
-    path = folder / f"signed-{now():%Y%m%d%H%M%S}-{safe}"
-    filestore.write(db, path, content)
+    stamp = f"{now():%Y%m%d%H%M%S}"
+    original = folder / f"original-{stamp}-{safe}"
+    filestore.write(db, original, content)
+    # The copy on record is an 8.5 x 11 PDF; the file as sent is kept alongside it.
+    path = original
+    letter = paper.to_letter_pdf(content, safe)
+    if letter is not None:
+        path = folder / f"signed-{stamp}-{Path(safe).stem}.pdf"
+        filestore.write(db, path, letter)
     w.signed_pdf_path = str(path)
     w.received_at = now()
-    log_event(db, w, actor, "received", WaiverStatus.RECEIVED.value, file=path.name)
+    log_event(db, w, actor, "received", WaiverStatus.RECEIVED.value, file=path.name, original=str(original))
 
 
 def undo_received(db: Session, w: Waiver, actor: str, note: str) -> None:
@@ -960,6 +967,74 @@ def create_manual_waiver(db: Session, sc: Subcontract, wtype: WaiverType, amount
     audit(db, actor, "waiver.manual", "subcontract", sc.id, waiver_id=w.id, type=wtype.value, amount=str(amount))
     attach_template_and_render(db, w, actor)
     return w
+
+
+def original_file(db: Session, w: Waiver) -> str | None:
+    """The signed copy exactly as it was sent (before it was made into a Letter PDF)."""
+    ev = db.scalar(select(WaiverEvent).where(WaiverEvent.waiver_id == w.id, WaiverEvent.action == "received")
+                   .order_by(WaiverEvent.id.desc()))
+    return ((ev.details or {}).get("original") if ev else None) or w.signed_pdf_path
+
+
+def straighten(db: Session, w: Waiver, turn, actor: str = SYSTEM) -> bool:
+    """The automatic check said the page reads sideways or upside down: re-make the Letter PDF
+    turned the right way. Photos whose phone already recorded the orientation are left alone
+    (that's applied anyway, and turning again would overshoot)."""
+    try:
+        turn = int(turn or 0) % 360
+    except (TypeError, ValueError):
+        return False
+    if turn not in (90, 180, 270) or not w.signed_pdf_path:
+        return False
+    src = original_file(db, w)
+    data = filestore.read(db, src) if src else None
+    if not data or (not paper.is_pdf(data) and _phone_oriented(data)):
+        return False
+    letter = paper.to_letter_pdf(data, Path(src).name, rotate=turn)
+    if letter is None:
+        return False
+    path = Path(w.signed_pdf_path).with_name(f"{Path(w.signed_pdf_path).stem}-upright.pdf")
+    filestore.write(db, path, letter)
+    w.signed_pdf_path = str(path)
+    log_event(db, w, actor, "straightened", note=f"turned {turn}° so it reads upright", file=path.name)
+    return True
+
+
+def _phone_oriented(data: bytes) -> bool:
+    try:
+        import io
+
+        from PIL import Image
+        with Image.open(io.BytesIO(data)) as im:
+            return im.getexif().get(274, 1) not in (1, None)
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def letter_size_all(db: Session, limit: int = 50) -> int:
+    """Catch up signed copies filed before they were made into 8.5 x 11 PDFs."""
+    n = 0
+    for w in db.scalars(select(Waiver).where(Waiver.signed_pdf_path.is_not(None),
+                                             Waiver.status.in_((WaiverStatus.RECEIVED.value,
+                                                                WaiverStatus.ACCEPTED.value)))).all():
+        v = dict(w.verification or {})
+        if v.get("letter"):
+            continue
+        data = filestore.read(db, w.signed_pdf_path)
+        if data and not paper.is_letter(data):
+            letter = paper.to_letter_pdf(data, Path(w.signed_pdf_path).name)
+            if letter is not None:
+                old = w.signed_pdf_path
+                path = Path(old).with_name(f"{Path(old).stem}-letter.pdf")
+                filestore.write(db, path, letter)
+                w.signed_pdf_path = str(path)
+                log_event(db, w, SYSTEM, "letter_size", note="made into an 8.5 x 11 PDF", original=old)
+                n += 1
+        v["letter"] = True
+        w.verification = v
+        if n >= limit:
+            break
+    return n
 
 
 def restore_requested_values(w: Waiver) -> None:
