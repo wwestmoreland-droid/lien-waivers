@@ -67,13 +67,16 @@ def image_to_pdf(data: bytes, rotate: int = 0) -> bytes:
 
 
 def pdf_to_letter(data: bytes, rotate: int = 0) -> bytes:
-    from pypdf import PageObject, PdfReader, PdfWriter, Transformation
+    from pypdf import PdfReader, PdfWriter, Transformation
 
     reader = PdfReader(io.BytesIO(data))
     if reader.is_encrypted:
         reader.decrypt("")
+    # Pages are turned while they belong to a writer (pypdf 7 won't change a reader's pages),
+    # then each is placed on a fresh Letter sheet in the output.
+    staged = PdfWriter(clone_from=reader)
     out = PdfWriter()
-    for page in reader.pages:
+    for page in staged.pages:
         if rotate:
             page.rotate(rotate)
         page.transfer_rotation_to_content()
@@ -85,10 +88,9 @@ def pdf_to_letter(data: bytes, rotate: int = 0) -> bytes:
             out.add_page(page)  # already Letter and upright
             continue
         pw, ph, s, x, y = _fit(w, h)
-        sheet = PageObject.create_blank_page(width=pw, height=ph)
+        sheet = out.add_blank_page(width=pw, height=ph)
         sheet.merge_transformed_page(
             page, Transformation().translate(-float(box.left), -float(box.bottom)).scale(s).translate(x, y))
-        out.add_page(sheet)
     buf = io.BytesIO()
     out.write(buf)
     return buf.getvalue()
