@@ -94,6 +94,7 @@ def run_sync(db: Session, source: SheetSource, trigger: str = "schedule",
         waivers.process_events(db, stats)
         waivers.refresh_payable_reviews(db)
         waivers.recheck_blocked(db)
+        stats["waiver_pdfs_repaired"] = waivers.repair_missing_pdfs(db)
         stats["partial_amounts_updated"] = waivers.refresh_partial_amounts(db)
         stats["monthly_partials_released"] = waivers.release_monthly_partials(db)
         stats["signed_values_recorded"] = waivers.apply_signed_values_all(db)

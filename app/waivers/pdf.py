@@ -101,14 +101,11 @@ def _draw_grid(c: canvas.Canvas, w: float, h: float) -> None:
 
 
 def fill(template: Template, values: dict[str, object], grid: bool = False) -> bytes:
-    base = PdfReader(str(template.file))
     overlay = PdfReader(io.BytesIO(_overlay(template, values, grid=grid)))
-    writer = PdfWriter()
-    page = base.pages[0]
-    page.merge_page(overlay.pages[0])
-    writer.add_page(page)
-    for extra in base.pages[1:]:
-        writer.add_page(extra)
+    # The template's pages belong to the writer before anything is merged onto them (pypdf 7
+    # refuses to change a page that isn't attached to a writer).
+    writer = PdfWriter(clone_from=str(template.file))
+    writer.pages[0].merge_page(overlay.pages[0])
     out = io.BytesIO()
     writer.write(out)
     return out.getvalue()

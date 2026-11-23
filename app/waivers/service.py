@@ -80,7 +80,15 @@ def process_events(db: Session, stats=None) -> None:
             ev.processed_at = now()
             ev.outcome = "history: no waiver created"
             continue
-        handle_event(db, ev, p, stats)
+        # One payable that fails (say, its PDF won't generate) mustn't stop the whole sync: it
+        # stays unprocessed and is tried again next time.
+        try:
+            with db.begin_nested():
+                handle_event(db, ev, p, stats)
+        except Exception as exc:  # noqa: BLE001
+            log.error("waivers.event_failed", event_id=ev.id, payable_id=p.id, error=str(exc)[:300])
+            if stats is not None:
+                stats["events_failed"] += 1
     db.flush()
 
 
@@ -424,6 +432,23 @@ def render_pdf(db: Session, w: Waiver, actor: str, today: date | None = None) ->
     return path
 
 
+def repair_missing_pdfs(db: Session, actor: str = SYSTEM) -> int:
+    """Waivers still waiting to go out whose PDF is missing (it failed to generate) get it made
+    now, and their unsent emails get it attached."""
+    n = 0
+    for w in db.scalars(select(Waiver).where(Waiver.status == WaiverStatus.DRAFT.value,
+                                             Waiver.template_key.is_not(None))).all():
+        if filestore.has(db, w.generated_pdf_path):
+            continue
+        try:
+            with db.begin_nested():
+                render_pdf(db, w, actor)
+            n += 1
+        except Exception as exc:  # noqa: BLE001
+            log.error("waivers.pdf_repair_failed", waiver_id=w.id, error=str(exc)[:300])
+    return n
+
+
 def recheck_blocked(db: Session, actor: str = SYSTEM) -> int:
     """Retry waivers blocked on a missing template (after a template is added)."""
     n = 0
@@ -466,7 +491,14 @@ def set_exceptions(db: Session, w: Waiver, text: str, actor: str) -> None:
 
 def regenerate(db: Session, w: Waiver, actor: str) -> None:
     _require_editable(w)
-    attach_template_and_render(db, w, actor)
+    try:
+        with db.begin_nested():
+            attach_template_and_render(db, w, actor)
+    except ValueError:
+        raise
+    except Exception as exc:  # noqa: BLE001  (shown on the page instead of a server error)
+        log.error("waivers.regenerate_failed", waiver_id=w.id, error=str(exc)[:300])
+        raise ValueError(f"Couldn't make the waiver PDF: {str(exc)[:200]}") from exc
 
 
 def mark_sent(db: Session, w: Waiver, actor: str) -> None:
